@@ -11,17 +11,16 @@ return new class extends Migration
      */
     public function up(): void
     {
+        // ✅ Vérifier que la colonne n'existe pas déjà
+        if (Schema::hasColumn('remboursements_avances', 'taux_change')) {
+            return;
+        }
+
         Schema::table('remboursements_avances', function (Blueprint $table) {
-            // Ajouter la colonne taux_change (nullable pour les anciens enregistrements)
             $table->decimal('taux_change', 15, 2)
                   ->nullable()
                   ->after('montant_rembourse_fc')
                   ->comment('Taux USD/CDF utilisé lors du remboursement');
-
-            // Optionnel : ajouter un index pour les requêtes fréquentes sur avance_id et paiement_salaire_id
-            // Si non existants, vous pouvez les ajouter ici
-            // $table->index('avance_id');
-            // $table->index('paiement_salaire_id');
         });
     }
 
@@ -30,6 +29,11 @@ return new class extends Migration
      */
     public function down(): void
     {
+        // ✅ Vérifier que la colonne existe avant de la supprimer
+        if (! Schema::hasColumn('remboursements_avances', 'taux_change')) {
+            return;
+        }
+
         Schema::table('remboursements_avances', function (Blueprint $table) {
             $table->dropColumn('taux_change');
         });
