@@ -6,23 +6,17 @@ use Illuminate\Support\Facades\Schema;
 
 class AddSessionPaiementIdToPaiementsTable extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
         Schema::table('paiements', function (Blueprint $table) {
             $table->foreignId('session_paiement_id')
                   ->nullable()
                   ->after('salle_classe_id')
-                  ->constrained('session_paiements')
+                  ->constrained('sessions_paiement')
                   ->nullOnDelete();
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::table('paiements', function (Blueprint $table) {
