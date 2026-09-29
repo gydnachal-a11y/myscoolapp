@@ -1,0 +1,111 @@
+# ============================================================
+# LOGS & OS
+# ============================================================
+*.log
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# ENVIRONNEMENT
+# ============================================================
+.env
+.env.*
+!.env.example
+.env.backup
+.env.production
+
+# ============================================================
+# OUTILS IDE / ÉDITEURS
+# ============================================================
+.phpactor.json
+.phpunit.result.cache
+/.codex
+/.cursor/
+/.idea
+/.nova
+/.phpunit.cache
+/.vscode
+/.zed
+_ide_helper.php
+_ide_helper_models.php
+*.sublime-workspace
+*.sublime-project
+.~lock.*
+*.swp
+
+# ============================================================
+# DÉPENDANCES
+# ============================================================
+/auth.json
+/node_modules
+/vendor
+/.pnp
+.pnp.js
+
+# ============================================================
+# BUILD / ASSETS
+# ============================================================
+/public/build
+/public/fonts-manifest.dev.json
+/public/hot
+/public/storage
+/public/mix-manifest.json
+/storage/*.key
+
+# ============================================================
+# STORAGE & CACHE LARAVEL (générés à la volée)
+# ============================================================
+/bootstrap/cache/*.php
+!/bootstrap/cache/.gitignore
+
+/storage/framework/views/*.php
+!/storage/framework/views/.gitignore
+
+/storage/framework/cache/data/*
+!/storage/framework/cache/data/.gitignore
+
+/storage/framework/sessions/*
+!/storage/framework/sessions/.gitignore
+
+/storage/framework/testing/*
+!/storage/framework/testing/.gitignore
+
+/storage/pail
+/storage/logs/*.log
+!/storage/logs/.gitignore
+
+# ============================================================
+# ARCHIVES & DUMPS (⚠️ ne JAMAIS commiter)
+# ============================================================
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+*.sql
+*.sqlite
+*.sqlite3
+database.sql
+dump.sql
+backup.sql
+
+# ============================================================
+# SCRIPTS LOCAUX (non versionnés)
+# ============================================================
+audit.ps1
+audit-final.ps1
+serve.ps1
+deploy-local.ps1
+
+# ============================================================
+# DIVERS
+# ============================================================
+Homestead.json
+Homestead.yaml
+.php-cs-fixer.cache
+.php_cs.cache
+node_modules/
+npm-debug.log
+yarn-error.log
+yarn.lock
+pnpm-debug.log

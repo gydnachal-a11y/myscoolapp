@@ -1,0 +1,1046 @@
+@extends('layouts.admin')
+
+@section('page_title', 'Utilisateurs du rôle')
+@section('page_subtitle', $role->label ?? ucfirst($role->name))
+
+@section('content')
+@php
+    // ✅ Préparation des données — côté serveur, une seule fois
+    $usersPayload = $users->map(function ($user) use ($role) {
+        return [
+            'id'    => (int) $user->id,
+            'name'  => (string) $user->name,
+            'email' => (string) $user->email,
+            'roles' => $user->relationLoaded('roles')
+                ? $user->roles
+                    ->reject(fn ($r) => (int) $r->id === (int) $role->id)
+                    ->map(fn ($r) => ['id' => (int) $r->id, 'name' => (string) $r->name])
+                    ->values()
+                    ->all()
+                : [],
+        ];
+    })->values()->all();
+
+    $assignedIds = array_map('intval', $assignedUsers ?? []);
+@endphp
+
+<div class="assign-users-page"
+     x-data="usersRoleManager({
+         usersData: {{ Js::from($usersPayload) }},
+         assignedIds: {{ Js::from($assignedIds) }},
+         roleId: {{ (int) $role->id }}
+     })"
+     x-init="init()">
+
+    {{-- ════════════════════════════════════════════════════════ --}}
+    {{-- HEADER --}}
+    {{-- ════════════════════════════════════════════════════════ --}}
+    <header class="page-header">
+        <div class="page-header-text">
+            <h1 class="page-title">
+                <i class="fa-solid fa-users-gear title-icon" aria-hidden="true"></i>
+                <span>Utilisateurs du rôle</span>
+                <span class="role-badge">{{ $role->label ?? ucfirst($role->name) }}</span>
+            </h1>
+            <p class="page-subtitle">
+                <span>Assignez ou retirez des utilisateurs à ce rôle</span>
+                <span class="count-badge">
+                    <i class="fa-solid fa-user-check" aria-hidden="true"></i>
+                    <span x-text="`${selectedUsers.length} / ${usersData.length} assignés`"></span>
+                </span>
+            </p>
+        </div>
+        <div class="header-actions">
+            <a href="{{ route('admin.roles.index') }}" class="btn btn-ghost">
+                <i class="fa-solid fa-arrow-left" aria-hidden="true"></i>
+                <span>Retour</span>
+            </a>
+        </div>
+    </header>
+
+    {{-- ════════════════════════════════════════════════════════ --}}
+    {{-- FORMULAIRE --}}
+    {{-- ════════════════════════════════════════════════════════ --}}
+    <form action="{{ route('admin.roles.sync-users', $role) }}"
+          method="POST"
+          @submit="onSubmit($event)"
+          class="content-card"
+          novalidate>
+
+        @csrf
+
+        {{-- ════════════════════════════════════════════════════════ --}}
+        {{-- TOOLBAR --}}
+        {{-- ════════════════════════════════════════════════════════ --}}
+        <div class="toolbar">
+
+            {{-- Ligne 1 : Tabs + Recherche --}}
+            <div class="toolbar-row">
+                <nav class="tabs" role="tablist" aria-label="Filtres utilisateurs">
+                    <button type="button" role="tab"
+                            class="tab"
+                            :class="{ 'is-active': activeFilter === 'all' }"
+                            :aria-selected="activeFilter === 'all'"
+                            @click="setFilter('all')">
+                        <i class="fa-solid fa-users" aria-hidden="true"></i>
+                        <span>Tous</span>
+                        <span class="tab-badge" x-text="usersData.length"></span>
+                    </button>
+                    <button type="button" role="tab"
+                            class="tab"
+                            :class="{ 'is-active': activeFilter === 'assigned' }"
+                            :aria-selected="activeFilter === 'assigned'"
+                            @click="setFilter('assigned')">
+                        <i class="fa-solid fa-circle-check" aria-hidden="true"></i>
+                        <span>Assignés</span>
+                        <span class="tab-badge" x-text="selectedUsers.length"></span>
+                    </button>
+                    <button type="button" role="tab"
+                            class="tab"
+                            :class="{ 'is-active': activeFilter === 'unassigned' }"
+                            :aria-selected="activeFilter === 'unassigned'"
+                            @click="setFilter('unassigned')">
+                        <i class="fa-regular fa-circle" aria-hidden="true"></i>
+                        <span>Non assignés</span>
+                        <span class="tab-badge"
+                              x-text="usersData.length - selectedUsers.length"></span>
+                    </button>
+                </nav>
+
+                <div class="search-field">
+                    <i class="fa-solid fa-magnifying-glass search-icon" aria-hidden="true"></i>
+                    <input type="search"
+                           x-model.debounce.200ms="search"
+                           placeholder="Rechercher un utilisateur…"
+                           aria-label="Rechercher un utilisateur"
+                           autocomplete="off">
+                    <button type="button"
+                            class="search-clear"
+                            x-show="search.length > 0"
+                            x-cloak
+                            @click="search = ''"
+                            aria-label="Effacer la recherche">
+                        <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                    </button>
+                </div>
+            </div>
+
+            {{-- Ligne 2 : Actions groupées --}}
+            <div class="toolbar-row toolbar-actions">
+                <div class="toolbar-info" aria-live="polite">
+                    <i class="fa-solid fa-list-check" aria-hidden="true"></i>
+                    <span>
+                        <strong x-text="filteredUsers.length"></strong>
+                        <span x-text="filteredUsers.length > 1 ? ' utilisateurs affichés' : ' utilisateur affiché'"></span>
+                    </span>
+                </div>
+
+                <div class="toolbar-buttons">
+                    <button type="button"
+                            class="link-btn link-success"
+                            @click="selectAllVisible()"
+                            :disabled="filteredUsers.length === 0">
+                        <i class="fa-solid fa-check-double" aria-hidden="true"></i>
+                        <span>Tout assigner (visibles)</span>
+                    </button>
+                    <button type="button"
+                            class="link-btn link-muted"
+                            @click="deselectAllVisible()"
+                            :disabled="filteredUsers.length === 0">
+                        <i class="fa-solid fa-eraser" aria-hidden="true"></i>
+                        <span>Tout retirer (visibles)</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        {{-- ════════════════════════════════════════════════════════ --}}
+        {{-- CORPS SCROLLABLE --}}
+        {{-- ════════════════════════════════════════════════════════ --}}
+        <div class="users-body">
+
+            {{-- Vide --}}
+            <template x-if="filteredUsers.length === 0">
+                <div class="empty-state">
+                    <div class="empty-icon-wrapper">
+                        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+                    </div>
+                    <h3 class="empty-title">Aucun utilisateur</h3>
+                    <p class="empty-text">
+                        <template x-if="search.length > 0">
+                            <span>Aucun résultat pour « <strong x-text="search"></strong> ».</span>
+                        </template>
+                        <template x-if="search.length === 0">
+                            <span>Aucun utilisateur dans cette catégorie.</span>
+                        </template>
+                    </p>
+                    <button type="button"
+                            class="btn btn-ghost"
+                            x-show="search.length > 0"
+                            x-cloak
+                            @click="search = ''">
+                        <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
+                        <span>Effacer la recherche</span>
+                    </button>
+                </div>
+            </template>
+
+            {{-- Grille --}}
+            <div class="users-grid"
+                 x-show="filteredUsers.length > 0"
+                 x-cloak
+                 role="group"
+                 aria-label="Liste des utilisateurs">
+                <template x-for="user in filteredUsers" :key="user.id">
+                    <label class="user-item"
+                           :class="{ 'is-assigned': isSelected(user.id) }">
+
+                        {{-- ✅ x-model.number : Alpine gère la synchro automatiquement --}}
+                        <input type="checkbox"
+                               name="users[]"
+                               :value="user.id"
+                               x-model.number="selectedUsers"
+                               class="user-checkbox">
+
+                        <span class="user-checkmark" aria-hidden="true"></span>
+
+                        <div class="user-avatar" x-text="initials(user.name)"></div>
+
+                        <div class="user-info">
+                            <div class="user-name-row">
+                                <span class="user-name" x-text="user.name"></span>
+                                {{-- Autres rôles --}}
+                                <template x-if="user.roles && user.roles.length > 0">
+                                    <span class="user-other-roles"
+                                          :title="'Autres rôles : ' + user.roles.map(r => r.name).join(', ')">
+                                        <i class="fa-solid fa-shield-halved" aria-hidden="true"></i>
+                                        <span x-text="user.roles.length"></span>
+                                    </span>
+                                </template>
+                            </div>
+                            <span class="user-email" x-text="user.email"></span>
+                        </div>
+
+                        <span class="user-status-pill"
+                              x-show="isSelected(user.id)"
+                              x-cloak>
+                            <i class="fa-solid fa-circle-check" aria-hidden="true"></i>
+                        </span>
+                    </label>
+                </template>
+            </div>
+        </div>
+
+        {{-- ════════════════════════════════════════════════════════ --}}
+        {{-- FOOTER --}}
+        {{-- ════════════════════════════════════════════════════════ --}}
+        <footer class="content-footer">
+            <div class="footer-info">
+                <span class="footer-count" aria-live="polite">
+                    <i class="fa-solid fa-circle-check" aria-hidden="true"></i>
+                    <strong x-text="selectedUsers.length"></strong>
+                    <span x-text="selectedUsers.length > 1 ? 'utilisateurs sélectionnés' : 'utilisateur sélectionné'"></span>
+                    <span class="footer-total">sur <span x-text="usersData.length"></span></span>
+                </span>
+
+                <span class="pending-badge" x-show="hasChanges" x-cloak>
+                    <i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>
+                    Modifications en attente
+                </span>
+            </div>
+
+            <div class="footer-actions">
+                <a href="{{ route('admin.roles.index') }}"
+                   class="btn btn-ghost"
+                   @click="onCancelClick($event)">
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                    <span>Annuler</span>
+                </a>
+                <button type="submit"
+                        class="btn btn-primary"
+                        :disabled="submitting || !hasChanges"
+                        :aria-busy="submitting">
+                    <template x-if="!submitting">
+                        <span class="btn-content">
+                            <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+                            <span>Enregistrer</span>
+                        </span>
+                    </template>
+                    <template x-if="submitting">
+                        <span class="btn-content">
+                            <i class="fa-solid fa-spinner fa-spin" aria-hidden="true"></i>
+                            <span>Enregistrement…</span>
+                        </span>
+                    </template>
+                </button>
+            </div>
+        </footer>
+    </form>
+</div>
+@endsection
+
+@push('styles')
+<style>
+    /* ════════════════════════════════════════════════════════
+       BASE
+       ════════════════════════════════════════════════════════ */
+    .assign-users-page {
+        --admin-header-height: 70px;
+        --footer-space: 90px;
+
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 2rem 1rem;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    @media (min-width: 1024px) {
+        .assign-users-page { --admin-header-height: 72px; }
+    }
+    @media (max-width: 768px) {
+        .assign-users-page {
+            padding: 1.25rem 0.85rem;
+            --admin-header-height: 60px;
+            --footer-space: 140px;
+        }
+    }
+    @media (max-width: 480px) {
+        .assign-users-page {
+            padding: 1rem 0.65rem;
+            --footer-space: 150px;
+        }
+    }
+
+    .assign-users-page *,
+    .assign-users-page *::before,
+    .assign-users-page *::after { box-sizing: border-box; }
+
+    .assign-users-page [x-cloak] { display: none !important; }
+
+    /* ════════════════════════════════════════════════════════
+       HEADER
+       ════════════════════════════════════════════════════════ */
+    .assign-users-page .page-header {
+        display: flex; flex-direction: column; gap: 1.25rem;
+        margin-bottom: 1.75rem;
+        flex-shrink: 0;
+    }
+    @media (min-width: 768px) {
+        .assign-users-page .page-header {
+            flex-direction: row; justify-content: space-between; align-items: center;
+        }
+    }
+    .assign-users-page .page-header-text { min-width: 0; }
+
+    .assign-users-page .page-title {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem;
+        font-size: 1.6rem; font-weight: 800;
+        color: #0f172a;
+        letter-spacing: -0.5px; margin: 0 0 0.35rem;
+    }
+    .assign-users-page .title-icon { color: #6366f1; font-size: 1.35rem; }
+
+    .assign-users-page .role-badge {
+        display: inline-flex; align-items: center;
+        padding: 0.25rem 0.75rem;
+        background: #eef2ff; color: #4f46e5;
+        border-radius: 9999px;
+        font-size: 0.78rem; font-weight: 700;
+        max-width: 100%;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    .assign-users-page .page-subtitle {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;
+        color: #64748b; font-size: 0.9rem; margin: 0;
+    }
+
+    .assign-users-page .count-badge {
+        display: inline-flex; align-items: center; gap: 0.4rem;
+        padding: 0.25rem 0.7rem;
+        background: #eef2ff; color: #4f46e5;
+        border-radius: 9999px;
+        font-size: 0.75rem; font-weight: 700;
+        font-variant-numeric: tabular-nums;
+    }
+    .assign-users-page .count-badge i { font-size: 0.7rem; }
+
+    .assign-users-page .header-actions {
+        display: flex; gap: 0.6rem; flex-wrap: wrap;
+    }
+    @media (max-width: 640px) {
+        .assign-users-page .header-actions { width: 100%; }
+        .assign-users-page .header-actions .btn { flex: 1; }
+    }
+
+    /* ════════════════════════════════════════════════════════
+       BOUTONS
+       ════════════════════════════════════════════════════════ */
+    .assign-users-page .btn {
+        display: inline-flex; align-items: center; justify-content: center;
+        gap: 0.5rem;
+        padding: 0.65rem 1.15rem;
+        border-radius: 12px;
+        font-weight: 600; font-size: 0.875rem;
+        font-family: inherit;
+        text-decoration: none;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s cubic-bezier(.4,0,.2,1);
+        white-space: nowrap;
+        min-height: 44px;
+    }
+
+    .assign-users-page .btn-primary {
+        background: linear-gradient(135deg, #4f46e5, #6366f1);
+        color: #fff;
+        box-shadow: 0 4px 12px rgba(79,70,229,0.25);
+    }
+    .assign-users-page .btn-primary:hover:not(:disabled) {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 18px rgba(79,70,229,0.35);
+    }
+    .assign-users-page .btn-primary:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+
+    .assign-users-page .btn-ghost {
+        background: #fff;
+        color: #64748b;
+        border: 1.5px solid #e2e8f0;
+    }
+    .assign-users-page .btn-ghost:hover {
+        border-color: #6366f1; color: #4f46e5; background: #f8fafc;
+    }
+
+    .assign-users-page .btn:focus-visible {
+        outline: 2px solid #4f46e5;
+        outline-offset: 2px;
+    }
+
+    .assign-users-page .btn-content {
+        display: inline-flex; align-items: center; gap: 0.5rem;
+    }
+
+    /* ════════════════════════════════════════════════════════
+       CONTENT CARD (flex column, hauteur bornée)
+       ════════════════════════════════════════════════════════ */
+    .assign-users-page .content-card {
+        background: #fff;
+        border-radius: 16px;
+        border: 1px solid #f1f5f9;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        max-height: calc(100vh - var(--admin-header-height) - 220px);
+        min-height: 480px;
+    }
+
+    @media (max-width: 768px) {
+        .assign-users-page .content-card {
+            max-height: calc(100vh - var(--admin-header-height) - 180px);
+            min-height: 400px;
+        }
+    }
+
+    /* ════════════════════════════════════════════════════════
+       TOOLBAR
+       ════════════════════════════════════════════════════════ */
+    .assign-users-page .toolbar {
+        flex-shrink: 0;
+        padding: 1rem 1.15rem;
+        border-bottom: 1px solid #f1f5f9;
+        background: #fff;
+        display: flex; flex-direction: column; gap: 0.75rem;
+    }
+    @media (max-width: 640px) {
+        .assign-users-page .toolbar { padding: 0.85rem; }
+    }
+
+    .assign-users-page .toolbar-row {
+        display: flex; flex-direction: column; gap: 0.75rem;
+    }
+    @media (min-width: 768px) {
+        .assign-users-page .toolbar-row {
+            flex-direction: row; justify-content: space-between; align-items: center;
+        }
+    }
+
+    /* Tabs */
+    .assign-users-page .tabs {
+        display: flex; gap: 0.35rem;
+        overflow-x: auto;
+        scrollbar-width: none;
+        padding-bottom: 2px;
+    }
+    .assign-users-page .tabs::-webkit-scrollbar { display: none; }
+
+    .assign-users-page .tab {
+        display: inline-flex; align-items: center; gap: 0.4rem;
+        padding: 0.5rem 0.9rem;
+        background: transparent;
+        border: 1.5px solid #e2e8f0;
+        border-radius: 10px;
+        font-weight: 600; font-size: 0.8rem;
+        font-family: inherit;
+        color: #64748b;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        white-space: nowrap;
+        flex-shrink: 0;
+        min-height: 38px;
+    }
+    .assign-users-page .tab:hover {
+        background: #f8fafc; color: #0f172a; border-color: #cbd5e1;
+    }
+    .assign-users-page .tab.is-active {
+        background: linear-gradient(135deg, #4f46e5, #6366f1);
+        color: #fff;
+        border-color: transparent;
+        box-shadow: 0 3px 8px rgba(79,70,229,0.22);
+    }
+    .assign-users-page .tab:focus-visible {
+        outline: 2px solid #4f46e5; outline-offset: 2px;
+    }
+
+    .assign-users-page .tab-badge {
+        display: inline-flex; align-items: center; justify-content: center;
+        min-width: 26px; height: 20px;
+        padding: 0 0.4rem;
+        background: rgba(255,255,255,0.25);
+        border-radius: 9999px;
+        font-size: 0.68rem; font-weight: 700;
+        font-variant-numeric: tabular-nums;
+    }
+    .assign-users-page .tab:not(.is-active) .tab-badge {
+        background: #f1f5f9; color: #64748b;
+    }
+
+    /* Recherche */
+    .assign-users-page .search-field { position: relative; width: 100%; max-width: 400px; }
+    @media (min-width: 768px) {
+        .assign-users-page .search-field { width: 320px; }
+    }
+    .assign-users-page .search-icon {
+        position: absolute; left: 0.85rem; top: 50%;
+        transform: translateY(-50%);
+        color: #94a3b8; font-size: 0.85rem;
+        pointer-events: none;
+    }
+    .assign-users-page .search-field input {
+        width: 100%;
+        padding: 0.6rem 2.4rem 0.6rem 2.3rem;
+        border: 1.5px solid #e2e8f0;
+        border-radius: 10px;
+        background: #f8fafc;
+        font-size: 0.875rem;
+        font-family: inherit;
+        color: #0f172a;
+        outline: none;
+        transition: all 0.2s;
+        min-height: 42px;
+    }
+    .assign-users-page .search-field input:focus {
+        border-color: #6366f1; background: #fff;
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.1);
+    }
+    .assign-users-page .search-clear {
+        position: absolute; right: 0.45rem; top: 50%;
+        transform: translateY(-50%);
+        width: 26px; height: 26px;
+        background: #f1f5f9; border: none;
+        border-radius: 6px;
+        color: #64748b; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        transition: all 0.15s;
+    }
+    .assign-users-page .search-clear:hover { background: #e2e8f0; color: #0f172a; }
+
+    /* Toolbar actions */
+    .assign-users-page .toolbar-actions {
+        padding-top: 0.6rem;
+        border-top: 1px dashed #e2e8f0;
+    }
+    .assign-users-page .toolbar-info {
+        display: inline-flex; align-items: center; gap: 0.5rem;
+        font-size: 0.82rem; color: #64748b;
+    }
+    .assign-users-page .toolbar-info i { color: #6366f1; }
+    .assign-users-page .toolbar-info strong { color: #0f172a; font-weight: 700; }
+
+    .assign-users-page .toolbar-buttons { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+
+    .assign-users-page .link-btn {
+        display: inline-flex; align-items: center; gap: 0.4rem;
+        padding: 0.45rem 0.7rem;
+        background: transparent; border: none;
+        border-radius: 8px;
+        font-weight: 600; font-size: 0.78rem;
+        font-family: inherit;
+        cursor: pointer;
+        transition: all 0.15s;
+        min-height: 36px;
+    }
+    .assign-users-page .link-btn:hover:not(:disabled) { background: #f1f5f9; }
+    .assign-users-page .link-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .assign-users-page .link-success { color: #059669; }
+    .assign-users-page .link-success:hover:not(:disabled) { background: #ecfdf5; }
+    .assign-users-page .link-muted { color: #64748b; }
+    .assign-users-page .link-muted:hover:not(:disabled) { background: #f1f5f9; color: #0f172a; }
+
+    /* ════════════════════════════════════════════════════════
+       CORPS SCROLLABLE
+       ════════════════════════════════════════════════════════ */
+    .assign-users-page .users-body {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+        padding: 1.15rem;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+        scrollbar-color: #cbd5e1 transparent;
+    }
+    .assign-users-page .users-body::-webkit-scrollbar { width: 8px; }
+    .assign-users-page .users-body::-webkit-scrollbar-track { background: transparent; }
+    .assign-users-page .users-body::-webkit-scrollbar-thumb {
+        background: #cbd5e1; border-radius: 4px;
+    }
+    .assign-users-page .users-body::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8;
+    }
+    @media (max-width: 640px) {
+        .assign-users-page .users-body { padding: 0.85rem; }
+    }
+
+    .assign-users-page .users-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.6rem;
+    }
+    @media (min-width: 640px)  { .assign-users-page .users-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (min-width: 1200px) { .assign-users-page .users-grid { grid-template-columns: repeat(3, 1fr); } }
+
+    /* ════════════════════════════════════════════════════════
+       ITEM UTILISATEUR
+       ════════════════════════════════════════════════════════ */
+    .assign-users-page .user-item {
+        display: flex; align-items: center;
+        gap: 0.65rem;
+        padding: 0.75rem 1rem;
+        background: #fff;
+        border: 1.5px solid #e2e8f0;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        position: relative;
+        user-select: none;
+        min-width: 0;
+    }
+    .assign-users-page .user-item:hover {
+        border-color: #c7d2fe;
+        background: #f8fafc;
+    }
+    .assign-users-page .user-item.is-assigned {
+        border-color: #6366f1;
+        background: #f5f7ff;
+        box-shadow: 0 2px 8px rgba(99,102,241,0.08);
+    }
+
+    /* Checkbox custom */
+    .assign-users-page .user-checkbox {
+        position: absolute; opacity: 0; pointer-events: none;
+        width: 0; height: 0;
+    }
+    .assign-users-page .user-checkmark {
+        width: 20px; height: 20px;
+        flex-shrink: 0;
+        border: 2px solid #cbd5e1;
+        border-radius: 6px;
+        background: #fff;
+        position: relative;
+        transition: all 0.15s;
+    }
+    .assign-users-page .user-checkmark::after {
+        content: '';
+        position: absolute;
+        left: 4px; top: 1px;
+        width: 5px; height: 10px;
+        border: solid #fff;
+        border-width: 0 2px 2px 0;
+        transform: rotate(45deg) scale(0);
+        transition: transform 0.15s;
+    }
+    .assign-users-page .user-item.is-assigned .user-checkmark {
+        background: #4f46e5; border-color: #4f46e5;
+    }
+    .assign-users-page .user-item.is-assigned .user-checkmark::after {
+        transform: rotate(45deg) scale(1);
+    }
+    .assign-users-page .user-checkbox:focus-visible + .user-checkmark {
+        box-shadow: 0 0 0 3px rgba(99,102,241,0.3);
+    }
+
+    /* Avatar */
+    .assign-users-page .user-avatar {
+        width: 36px; height: 36px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        color: #fff;
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 700; font-size: 0.75rem;
+        flex-shrink: 0;
+        letter-spacing: 0.3px;
+    }
+    .assign-users-page .user-item.is-assigned .user-avatar {
+        box-shadow: 0 2px 6px rgba(99,102,241,0.35);
+    }
+
+    /* Info */
+    .assign-users-page .user-info {
+        flex: 1; min-width: 0;
+        display: flex; flex-direction: column; gap: 0.1rem;
+    }
+    .assign-users-page .user-name-row {
+        display: flex; align-items: center; gap: 0.4rem;
+        min-width: 0;
+    }
+    .assign-users-page .user-name {
+        font-size: 0.9rem; font-weight: 600; color: #0f172a;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .assign-users-page .user-other-roles {
+        display: inline-flex; align-items: center; gap: 0.2rem;
+        padding: 0.05rem 0.4rem;
+        background: #f1f5f9;
+        color: #64748b;
+        border-radius: 9999px;
+        font-size: 0.62rem; font-weight: 700;
+        flex-shrink: 0;
+        cursor: help;
+    }
+    .assign-users-page .user-other-roles i { font-size: 0.55rem; }
+
+    .assign-users-page .user-email {
+        font-size: 0.72rem; color: #94a3b8;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* Pill "assigné" */
+    .assign-users-page .user-status-pill {
+        display: inline-flex; align-items: center; gap: 0.25rem;
+        padding: 0.2rem 0.5rem;
+        background: #ecfdf5; color: #059669;
+        border-radius: 9999px;
+        font-size: 0.68rem; font-weight: 700;
+        flex-shrink: 0;
+    }
+
+    /* ════════════════════════════════════════════════════════
+       FOOTER
+       ════════════════════════════════════════════════════════ */
+    .assign-users-page .content-footer {
+        flex-shrink: 0;
+        display: flex; flex-direction: column; gap: 1rem;
+        padding: 1rem 1.15rem;
+        padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+        background: #fff;
+        border-top: 1px solid #e2e8f0;
+        box-shadow: 0 -4px 12px rgba(0,0,0,0.04);
+    }
+    @media (min-width: 768px) {
+        .assign-users-page .content-footer {
+            flex-direction: row; justify-content: space-between; align-items: center;
+        }
+    }
+
+    .assign-users-page .footer-info {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;
+        font-size: 0.875rem; color: #64748b;
+    }
+    .assign-users-page .footer-count {
+        display: inline-flex; align-items: center; gap: 0.4rem;
+    }
+    .assign-users-page .footer-count i { color: #6366f1; }
+    .assign-users-page .footer-count strong {
+        color: #4f46e5; font-size: 1rem; font-weight: 800;
+        font-variant-numeric: tabular-nums;
+    }
+    .assign-users-page .footer-total {
+        color: #94a3b8; font-size: 0.8rem; margin-left: 0.25rem;
+    }
+
+    .assign-users-page .pending-badge {
+        display: inline-flex; align-items: center; gap: 0.35rem;
+        padding: 0.25rem 0.65rem;
+        background: #fffbeb; color: #b45309;
+        border-radius: 9999px;
+        font-size: 0.72rem; font-weight: 600;
+    }
+
+    .assign-users-page .footer-actions {
+        display: flex; gap: 0.5rem; flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+    @media (max-width: 640px) {
+        .assign-users-page .footer-actions {
+            width: 100%; flex-direction: column-reverse;
+        }
+        .assign-users-page .footer-actions .btn { width: 100%; }
+    }
+
+    /* ════════════════════════════════════════════════════════
+       ÉTAT VIDE
+       ════════════════════════════════════════════════════════ */
+    .assign-users-page .empty-state {
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center;
+        padding: 3.5rem 1.5rem;
+        text-align: center; gap: 0.5rem;
+    }
+    .assign-users-page .empty-icon-wrapper {
+        width: 80px; height: 80px;
+        border-radius: 50%;
+        background: #f8fafc;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 2rem; color: #cbd5e1;
+        margin-bottom: 0.75rem;
+    }
+    .assign-users-page .empty-title {
+        font-size: 1.05rem; font-weight: 700;
+        color: #334155; margin: 0;
+    }
+    .assign-users-page .empty-text {
+        font-size: 0.875rem; color: #94a3b8;
+        max-width: 420px; margin: 0; line-height: 1.5;
+    }
+    .assign-users-page .empty-text strong { color: #475569; }
+
+    /* ════════════════════════════════════════════════════════
+       RESPONSIVE
+       ════════════════════════════════════════════════════════ */
+    @media (max-width: 640px) {
+        .assign-users-page .page-title { font-size: 1.25rem; }
+        .assign-users-page .title-icon { font-size: 1.1rem; }
+        .assign-users-page .user-item { padding: 0.65rem 0.85rem; }
+        .assign-users-page .user-avatar { width: 32px; height: 32px; font-size: 0.7rem; }
+        .assign-users-page .search-field { max-width: 100%; }
+        .assign-users-page .tabs { width: 100%; }
+        .assign-users-page .tab { flex: 1; justify-content: center; }
+        .assign-users-page .tab span:not(.tab-badge) { display: none; }
+        .assign-users-page .tab-badge { display: inline-flex; }
+
+        /* Anti-zoom iOS */
+        .assign-users-page .search-field input { font-size: 16px; }
+    }
+
+    @media (max-width: 480px) {
+        .assign-users-page .page-title { font-size: 1.1rem; }
+        .assign-users-page .tab { padding: 0.45rem 0.7rem; font-size: 0.75rem; }
+        .assign-users-page .tab-badge { min-width: 22px; font-size: 0.62rem; }
+        .assign-users-page .link-btn { font-size: 0.72rem; padding: 0.4rem 0.6rem; }
+        .assign-users-page .footer-count span { display: none; }
+    }
+
+    /* ════════════════════════════════════════════════════════
+       A11Y + PRINT
+       ════════════════════════════════════════════════════════ */
+    @media (prefers-reduced-motion: reduce) {
+        .assign-users-page *,
+        .assign-users-page *::before,
+        .assign-users-page *::after {
+            animation-duration: 0.01ms !important;
+            transition-duration: 0.01ms !important;
+        }
+    }
+
+    @media print {
+        .assign-users-page .toolbar,
+        .assign-users-page .content-footer,
+        .assign-users-page .header-actions,
+        .assign-users-page .search-field,
+        .assign-users-page .tabs { display: none !important; }
+        .assign-users-page .content-card {
+            box-shadow: none; border: 1px solid #ccc;
+            max-height: none;
+        }
+        .assign-users-page .users-body { overflow: visible; }
+    }
+</style>
+@endpush
+
+@push('scripts')
+<script>
+    /**
+     * ✅ Composant Alpine pour la gestion des utilisateurs d'un rôle.
+     *
+     * Corrections clés :
+     *   1. `x-model.number` sur les checkboxes → synchronisation native
+     *   2. `onSubmit` ne fait que le guard + confirm → le form se soumet
+     *      NATIVEMENT (plus de `$el.submit()` bogué)
+     *   3. Filtres (all / assigned / unassigned)
+     *   4. Cache de `filteredUsers` pour éviter les recalculs
+     */
+    (function () {
+        const factory = (config) => ({
+            /* ============================================================
+               ÉTAT
+               ============================================================ */
+            usersData: config.usersData || [],
+            assignedIds: (config.assignedIds || []).map(Number),
+            roleId: config.roleId || null,
+
+            selectedUsers: [],   // lié via x-model.number
+            search: '',
+            activeFilter: 'all',  // all | assigned | unassigned
+            submitting: false,
+
+            /* ============================================================
+               INIT
+               ============================================================ */
+            init() {
+                this.selectedUsers = [...this.assignedIds];
+
+                // ✅ Reset du flag submitting au retour navigateur
+                window.addEventListener('pageshow', () => {
+                    this.submitting = false;
+                });
+
+                // ✅ Warning si modifs non sauvegardées
+                window.addEventListener('beforeunload', (e) => {
+                    if (this.hasChanges && !this.submitting) {
+                        e.preventDefault();
+                        e.returnValue = '';
+                    }
+                });
+            },
+
+            /* ============================================================
+               GETTERS
+               ============================================================ */
+            get filteredUsers() {
+                const query = (this.search || '').toLowerCase().trim();
+                const selectedSet = new Set(this.selectedUsers);
+                let users = this.usersData;
+
+                if (this.activeFilter === 'assigned') {
+                    users = users.filter(u => selectedSet.has(u.id));
+                } else if (this.activeFilter === 'unassigned') {
+                    users = users.filter(u => !selectedSet.has(u.id));
+                }
+
+                if (query) {
+                    users = users.filter(u =>
+                        u.name.toLowerCase().includes(query)
+                        || u.email.toLowerCase().includes(query)
+                    );
+                }
+
+                // Tri : assignés d'abord, puis alphabétique
+                return [...users].sort((a, b) => {
+                    const aA = selectedSet.has(a.id);
+                    const bA = selectedSet.has(b.id);
+                    if (aA !== bA) return aA ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                });
+            },
+
+            get hasChanges() {
+                if (this.selectedUsers.length !== this.assignedIds.length) return true;
+
+                const sortedCurrent  = [...this.selectedUsers].sort((a, b) => a - b);
+                const sortedOriginal = [...this.assignedIds].sort((a, b) => a - b);
+
+                for (let i = 0; i < sortedCurrent.length; i++) {
+                    if (sortedCurrent[i] !== sortedOriginal[i]) return true;
+                }
+                return false;
+            },
+
+            /* ============================================================
+               HELPERS
+               ============================================================ */
+            isSelected(id) {
+                return this.selectedUsers.includes(Number(id));
+            },
+
+            initials(name) {
+                return (name || '?')
+                    .split(' ')
+                    .filter(Boolean)
+                    .slice(0, 2)
+                    .map(w => w[0].toUpperCase())
+                    .join('');
+            },
+
+            /* ============================================================
+               ACTIONS
+               ============================================================ */
+            setFilter(filter) {
+                this.activeFilter = filter;
+            },
+
+            selectAllVisible() {
+                const ids = this.filteredUsers.map(u => u.id);
+                const set = new Set([...this.selectedUsers, ...ids]);
+                this.selectedUsers = Array.from(set);
+            },
+
+            deselectAllVisible() {
+                const idsSet = new Set(this.filteredUsers.map(u => u.id));
+                this.selectedUsers = this.selectedUsers.filter(id => !idsSet.has(id));
+            },
+
+            /* ============================================================
+               SOUMISSION
+               ============================================================ */
+            onSubmit(event) {
+                if (this.submitting) {
+                    event.preventDefault();
+                    return;
+                }
+
+                const removed = this.assignedIds.filter(id => !this.selectedUsers.includes(id));
+                if (removed.length > 5) {
+                    const plural = removed.length > 1 ? 's' : '';
+                    if (!confirm(`Vous allez retirer ${removed.length} utilisateur${plural} de ce rôle.\n\nContinuer ?`)) {
+                        event.preventDefault();
+                        return;
+                    }
+                }
+
+                // ✅ On laisse le submit NATIF se produire
+                this.submitting = true;
+            },
+
+            onCancelClick(event) {
+                if (this.hasChanges && !this.submitting) {
+                    if (!confirm('Vous avez des modifications non enregistrées. Quitter ?')) {
+                        event.preventDefault();
+                    }
+                }
+            },
+        });
+
+        // ✅ Enregistrement idempotent
+        const register = () => {
+            if (window.Alpine && !window._usersRoleManagerRegistered) {
+                window._usersRoleManagerRegistered = true;
+                window.Alpine.data('usersRoleManager', factory);
+            }
+        };
+
+        if (window.Alpine) {
+            register();
+        } else {
+            document.addEventListener('alpine:init', register);
+        }
+    })();
+</script>
+@endpush
