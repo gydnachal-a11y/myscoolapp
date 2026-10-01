@@ -1,0 +1,48 @@
+﻿
+
+  GET|HEAD        / ........................................................................................................ home ÔÇ║ 
+HomeController@index
+  GET|HEAD        annonces .................................................................................. annonces ÔÇ║ 
+ExternalAuthController@annonces
+  GET|HEAD        api/salles-details ................................................................... api.salles-details ÔÇ║ 
+Api\SalleDetailsController
+  GET|HEAD        auth/google/callback ................................................... google.callback ÔÇ║ 
+ExternalAuthController@handleGoogleCallback
+  GET|HEAD        auth/google/redirect ....................................................... google.redirect ÔÇ║ 
+ExternalAuthController@redirectToGoogle
+  GET|HEAD        classements ............................................................................ public.classement ÔÇ║ 
+HomeController@classement
+  POST            connexion ............................................................................................... ExternalAuthController@login
+  GET|HEAD        contact ............................................................................................. contact ÔÇ║ 
+ContactController@show
+  POST            contact ...................................................................................... contact.store ÔÇ║ 
+ContactController@store
+  GET|HEAD        dashboard ......................................................................... dashboard.index ÔÇ║ 
+Member\DashboardController@index
+  GET|HEAD        enregistrement .................................................. public.enregistrement.create ÔÇ║ 
+PublicEnregistrementController@create
+  POST            enregistrement .................................................... public.enregistrement.store ÔÇ║ 
+PublicEnregistrementController@store
+  GET|HEAD        enregistrement/confirmation ......................... public.enregistrement.confirmation ÔÇ║ 
+PublicEnregistrementController@confirmation
+  POST            inscription .......................................................................................... ExternalAuthController@register
+  GET|HEAD        inscriptions ............................................................... public.inscriptions ÔÇ║ 
+HomeController@inscriptionsParSalle
+  GET|HEAD        login ........................................................................................... login ÔÇ║ 
+AuthController@showLoginForm
+  POST            login ............................................................................................. login.store ÔÇ║ 
+AuthController@login
+  POST            logout ................................................................................................ logout ÔÇ║ 
+AuthController@logout
+  POST            newsletter/subscribe ........................................................... newsletter.subscribe ÔÇ║ 
+NewsletterController@subscribe
+  GET|HEAD        newsletter/unsubscribe/{contact} ........................................... newsletter.unsubscribe ÔÇ║ 
+NewsletterController@unsubscribe
+  GET|HEAD        paiements .......................................................................... public.paiements ÔÇ║ 
+PublicPaiementController@index
+  GET|HEAD        {fallbackPlaceholder} ............................................................................................. routes/web.php:804
+
+                                                                                                                                    Showing [357] routes
+
+
+

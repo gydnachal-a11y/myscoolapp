@@ -56,7 +56,7 @@
             $ctaLabel = 'Tableau de bord';
             $ctaIcon  = 'fa-gauge-high';
         } elseif ($contactUser) {
-            $ctaUrl   = url('/external/dashboard');
+            $ctaUrl   = url('/espace-contact');
             $ctaLabel = 'Mon espace';
             $ctaIcon  = 'fa-user-circle';
         } else {
@@ -65,10 +65,8 @@
             $ctaIcon  = 'fa-rocket';
         }
 
-        // ✅ Interrupteur : affichage des liens publics (élèves, paiements, proclamation, enregistrement)
         $showPublicLinks = (bool) ($settings->show_public_links ?? true);
 
-        // Pré-calculs règlement (évite les @if multiples dans le DOM)
         $hasRegles        = isset($reglements['regles'])        && $reglements['regles']->isNotEmpty();
         $hasObligations   = isset($reglements['obligations'])   && $reglements['obligations']->isNotEmpty();
         $hasInterdictions = isset($reglements['interdictions']) && $reglements['interdictions']->isNotEmpty();
@@ -121,7 +119,6 @@
            DESIGN TOKENS
         ============================================================ */
         :root {
-            /* Brand */
             --primary:       #6C63FF;
             --primary-dark:  #5A52D5;
             --primary-light: #8B83FF;
@@ -129,7 +126,6 @@
             --accent:        #FFB74D;
             --accent-light:  #FFCC80;
 
-            /* Neutres */
             --gray-50:  #F9FAFB;
             --gray-100: #F3F4F6;
             --gray-200: #E5E7EB;
@@ -141,11 +137,9 @@
             --gray-800: #1F2937;
             --gray-900: #111827;
 
-            /* Gradients réutilisables */
             --grad-brand: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
             --grad-brand-dark: linear-gradient(135deg, var(--primary-dark) 0%, var(--secondary) 100%);
 
-            /* Ombres */
             --shadow-xs: 0 1px 2px rgba(0,0,0,.04);
             --shadow-sm: 0 1px 3px rgba(0,0,0,.08);
             --shadow-md: 0 4px 12px rgba(0,0,0,.08);
@@ -154,18 +148,15 @@
             --shadow-brand: 0 8px 16px rgba(108,99,255,.25);
             --shadow-brand-lg: 0 12px 24px rgba(108,99,255,.35);
 
-            /* Rayons */
             --radius-sm:   8px;
             --radius-md:   12px;
             --radius-lg:   16px;
             --radius-xl:   24px;
             --radius-full: 9999px;
 
-            /* Transitions */
             --t-fast: 150ms cubic-bezier(.4,0,.2,1);
             --t-base: 300ms cubic-bezier(.4,0,.2,1);
 
-            /* Layout */
             --nav-h: 70px;
         }
 
@@ -195,11 +186,10 @@
             flex-wrap: wrap;
         }
 
-        /* Sections basses : rendu différé */
         .cv-auto { content-visibility: auto; contain-intrinsic-size: 1px 800px; }
 
         /* ============================================================
-           NAVIGATION
+           NAVIGATION — Version améliorée avec scroll-spy
         ============================================================ */
         .navbar {
             position: fixed;
@@ -210,10 +200,13 @@
             -webkit-backdrop-filter: blur(12px);
             border-bottom: 1px solid var(--gray-200);
             box-shadow: var(--shadow-xs);
-            transition: box-shadow var(--t-base);
+            transition: box-shadow var(--t-base), background var(--t-base);
         }
 
-        .navbar.scrolled { box-shadow: var(--shadow-md); }
+        .navbar.scrolled {
+            box-shadow: var(--shadow-md);
+            background-color: rgba(255,255,255,1);
+        }
 
         .navbar-inner {
             display: flex;
@@ -237,7 +230,9 @@
             font-size: 1.25rem;
             box-shadow: var(--shadow-sm);
             flex-shrink: 0;
+            transition: transform var(--t-base);
         }
+        .logo:hover .logo-icon { transform: rotate(-5deg) scale(1.05); }
 
         .logo-text {
             font-size: 1.375rem;
@@ -268,6 +263,7 @@
             color: var(--gray-700);
             font-size: .95rem;
             white-space: nowrap;
+            padding-block: .25rem;
         }
 
         .nav-link::after {
@@ -284,6 +280,15 @@
 
         .nav-link:hover { color: var(--primary); }
         .nav-link:hover::after { width: 100%; }
+
+        /* ✅ Scroll-spy : lien actif automatiquement */
+        .nav-link.active {
+            color: var(--primary);
+            font-weight: 600;
+        }
+        .nav-link.active::after {
+            width: 100%;
+        }
 
         .nav-buttons { display: flex; align-items: center; gap: .5rem; }
 
@@ -322,7 +327,6 @@
             transform: translateY(-2px);
         }
 
-        /* ✅ Bouton "Connexion" mis en avant */
         .btn-nav-login {
             position: relative;
             background: var(--grad-brand);
@@ -338,10 +342,8 @@
             transform: translateY(-2px);
             box-shadow: var(--shadow-brand-lg);
         }
-        .btn-nav-login:active {
-            transform: translateY(0);
-        }
-        /* Point d'attention pulsant (optionnel, discret) */
+        .btn-nav-login:active { transform: translateY(0); }
+
         .btn-nav-login::before {
             content: '';
             position: absolute;
@@ -374,7 +376,6 @@
         }
         .mobile-toggle:hover { background: var(--gray-100); color: var(--primary); }
 
-        /* Menu mobile */
         .mobile-menu {
             position: fixed;
             top: var(--nav-h);
@@ -590,9 +591,263 @@
         .section-subtitle { font-size: clamp(.9rem, 1.5vw, 1.1rem); color: var(--gray-600); }
         .section-header   { text-align: center; margin-bottom: 3.5rem; }
 
-        /* Ancres : espace au-dessus pour ne pas être masqué par la navbar */
         section[id]                  { scroll-margin-top: 80px; }
         .reglement-group             { scroll-margin-top: 95px; }
+
+        /* ============================================================
+           ✅ NOUVELLE SECTION — DÉCOUVRIR LA PLATEFORME
+        ============================================================ */
+        .feature-card {
+            background: #fff;
+            border-radius: var(--radius-lg);
+            padding: 2rem 1.75rem;
+            border: 1px solid var(--gray-200);
+            box-shadow: var(--shadow-sm);
+            transition: all var(--t-base);
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 4px;
+            background: var(--grad-brand);
+            transform: scaleX(0);
+            transform-origin: left;
+            transition: transform var(--t-base);
+        }
+        .feature-card:hover {
+            transform: translateY(-8px);
+            box-shadow: var(--shadow-xl);
+            border-color: var(--primary-light);
+        }
+        .feature-card:hover::before { transform: scaleX(1); }
+
+        .feature-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: var(--radius-lg);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.75rem;
+            color: #fff;
+            margin-bottom: 1.25rem;
+            box-shadow: var(--shadow-md);
+            transition: transform var(--t-base);
+        }
+        .feature-card:hover .feature-icon { transform: scale(1.1) rotate(-5deg); }
+
+        .feature-icon.is-indigo  { background: linear-gradient(135deg, #6366f1, #8b5cf6); }
+        .feature-icon.is-emerald { background: linear-gradient(135deg, #10b981, #059669); }
+        .feature-icon.is-amber   { background: linear-gradient(135deg, #f59e0b, #d97706); }
+        .feature-icon.is-rose    { background: linear-gradient(135deg, #f43f5e, #e11d48); }
+
+        .feature-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--gray-900);
+            margin-bottom: .65rem;
+            line-height: 1.3;
+        }
+
+        .feature-text {
+            color: var(--gray-600);
+            font-size: .92rem;
+            line-height: 1.65;
+            flex: 1;
+        }
+
+        /* ============================================================
+           ✅ NOUVELLE SECTION — PUBLIC vs ABONNÉS
+        ============================================================ */
+        .access-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 1.5rem;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .access-card {
+            background: #fff;
+            border-radius: var(--radius-xl);
+            padding: 2rem;
+            border: 2px solid var(--gray-200);
+            box-shadow: var(--shadow-md);
+            position: relative;
+            overflow: hidden;
+            transition: all var(--t-base);
+        }
+        .access-card:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-xl);
+        }
+
+        .access-card.is-public   { border-color: #c7d2fe; }
+        .access-card.is-member   { border-color: #a7f3d0; }
+
+        .access-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: .5rem;
+            padding: .5rem 1rem;
+            border-radius: var(--radius-full);
+            font-size: .8rem;
+            font-weight: 700;
+            letter-spacing: .03em;
+            text-transform: uppercase;
+            margin-bottom: 1.25rem;
+        }
+        .access-card.is-public .access-badge {
+            background: #eef2ff;
+            color: #4338ca;
+            border: 1px solid #c7d2fe;
+        }
+        .access-card.is-member .access-badge {
+            background: #ecfdf5;
+            color: #047857;
+            border: 1px solid #a7f3d0;
+        }
+
+        .access-title {
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: var(--gray-900);
+            margin-bottom: .5rem;
+            line-height: 1.2;
+        }
+
+        .access-desc {
+            color: var(--gray-600);
+            font-size: .95rem;
+            margin-bottom: 1.5rem;
+            line-height: 1.6;
+        }
+
+        .access-list {
+            display: flex;
+            flex-direction: column;
+            gap: .85rem;
+        }
+
+        .access-item {
+            display: flex;
+            align-items: flex-start;
+            gap: .75rem;
+            font-size: .92rem;
+            color: var(--gray-700);
+            line-height: 1.5;
+        }
+        .access-item i {
+            flex-shrink: 0;
+            margin-top: .2rem;
+            font-size: .95rem;
+        }
+        .access-card.is-public .access-item i { color: #6366f1; }
+        .access-card.is-member .access-item i { color: #10b981; }
+
+        .access-cta {
+            display: inline-flex;
+            align-items: center;
+            gap: .5rem;
+            margin-top: 1.75rem;
+            padding: .75rem 1.5rem;
+            border-radius: var(--radius-full);
+            font-weight: 600;
+            font-size: .9rem;
+            transition: all var(--t-base);
+        }
+        .access-card.is-public .access-cta {
+            background: #eef2ff;
+            color: #4338ca;
+        }
+        .access-card.is-public .access-cta:hover {
+            background: #e0e7ff;
+            transform: translateX(4px);
+        }
+        .access-card.is-member .access-cta {
+            background: var(--grad-brand);
+            color: #fff;
+            box-shadow: var(--shadow-brand);
+        }
+        .access-card.is-member .access-cta:hover {
+            box-shadow: var(--shadow-brand-lg);
+            transform: translateY(-2px);
+        }
+
+        /* ============================================================
+           ✅ NOUVELLE SECTION — CTA FINAL
+        ============================================================ */
+        .cta-final {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border-radius: var(--radius-xl);
+            padding: 3.5rem 2rem;
+            text-align: center;
+            color: #fff;
+            position: relative;
+            overflow: hidden;
+        }
+        .cta-final::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 60% 80% at 20% 0%, rgba(99, 102, 241, 0.35), transparent 60%),
+                radial-gradient(ellipse 60% 80% at 80% 100%, rgba(16, 185, 129, 0.25), transparent 60%);
+            pointer-events: none;
+        }
+        .cta-final > * { position: relative; z-index: 1; }
+
+        .cta-final h2 {
+            font-size: clamp(1.5rem, 3.5vw, 2.25rem);
+            margin-bottom: 1rem;
+            color: #fff;
+            letter-spacing: -.02em;
+            line-height: 1.2;
+        }
+        .cta-final p {
+            color: #cbd5e1;
+            font-size: 1.05rem;
+            margin-bottom: 2rem;
+            max-width: 600px;
+            margin-inline: auto;
+            line-height: 1.6;
+        }
+
+        .cta-final-buttons {
+            display: flex;
+            gap: 1rem;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .cta-final-btn {
+            padding: .875rem 2rem;
+            border-radius: var(--radius-full);
+            font-weight: 600;
+            font-size: 1rem;
+            display: inline-flex;
+            align-items: center;
+            gap: .5rem;
+            transition: all var(--t-base);
+        }
+        .cta-final-btn-primary {
+            background: var(--grad-brand);
+            color: #fff;
+            box-shadow: var(--shadow-brand-lg);
+        }
+        .cta-final-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 16px 32px rgba(108,99,255,.5); }
+        .cta-final-btn-outline {
+            background: rgba(255,255,255,.08);
+            color: #fff;
+            border: 1.5px solid rgba(255,255,255,.2);
+            backdrop-filter: blur(10px);
+        }
+        .cta-final-btn-outline:hover { background: rgba(255,255,255,.15); transform: translateY(-2px); }
 
         /* ============================================================
            CARTES ANNONCES / ORGANISATION
@@ -685,10 +940,8 @@
         }
 
         /* ============================================================
-           RÈGLEMENT INTÉRIEUR — SECTION SOIGNÉE
+           RÈGLEMENT INTÉRIEUR
         ============================================================ */
-
-        /* Navigation rapide (pills) */
         .reglement-nav {
             display: flex;
             flex-wrap: wrap;
@@ -738,10 +991,7 @@
         .reglement-nav-pill.is-amber .reglement-nav-count { background: #FEF3C7; color: #92400E; }
         .reglement-nav-pill.is-red   .reglement-nav-count { background: #FEE2E2; color: #B91C1C; }
 
-        /* Groupe par catégorie */
-        .reglement-group {
-            margin-bottom: 2.75rem;
-        }
+        .reglement-group { margin-bottom: 2.75rem; }
         .reglement-group:last-child { margin-bottom: 0; }
 
         .reglement-group-header {
@@ -790,7 +1040,6 @@
             flex-shrink: 0;
         }
 
-        /* Liste de cartes */
         .reglement-list {
             display: grid;
             grid-template-columns: 1fr;
@@ -840,7 +1089,6 @@
         .reglement-card.is-amber .reglement-card-title i { color: #D97706; }
         .reglement-card.is-red   .reglement-card-title i { color: #DC2626; }
 
-        /* Corps HTML (issu de CKEditor) */
         .reglement-card-body {
             color: var(--gray-600);
             font-size: .95rem;
@@ -1047,15 +1295,43 @@
         }
 
         /* ============================================================
-           ANIMATIONS
+           ✅ ANIMATIONS DE SCROLL — 5 variantes
         ============================================================ */
-        .reveal {
+        .reveal,
+        .reveal-up,
+        .reveal-down,
+        .reveal-left,
+        .reveal-right,
+        .reveal-scale {
             opacity: 0;
-            transform: translateY(20px);
-            transition: opacity .6s cubic-bezier(.4,0,.2,1),
-                        transform .6s cubic-bezier(.4,0,.2,1);
+            transition: opacity .7s cubic-bezier(.4,0,.2,1),
+                        transform .7s cubic-bezier(.4,0,.2,1);
+            will-change: opacity, transform;
         }
-        .reveal.visible { opacity: 1; transform: translateY(0); }
+
+        .reveal        { transform: translateY(20px); }
+        .reveal-up     { transform: translateY(40px); }
+        .reveal-down   { transform: translateY(-40px); }
+        .reveal-left   { transform: translateX(-40px); }
+        .reveal-right  { transform: translateX(40px); }
+        .reveal-scale  { transform: scale(0.94); }
+
+        .reveal.visible,
+        .reveal-up.visible,
+        .reveal-down.visible,
+        .reveal-left.visible,
+        .reveal-right.visible,
+        .reveal-scale.visible {
+            opacity: 1;
+            transform: translate(0, 0) scale(1);
+        }
+
+        /* Délais en cascade pour les enfants */
+        .reveal-delay-1 { transition-delay: .1s; }
+        .reveal-delay-2 { transition-delay: .2s; }
+        .reveal-delay-3 { transition-delay: .3s; }
+        .reveal-delay-4 { transition-delay: .4s; }
+        .reveal-delay-5 { transition-delay: .5s; }
 
         @media (prefers-reduced-motion: reduce) {
             *, *::before, *::after {
@@ -1065,6 +1341,10 @@
                 scroll-behavior: auto !important;
             }
             .btn-nav-login::before { animation: none; }
+            .reveal, .reveal-up, .reveal-down, .reveal-left, .reveal-right, .reveal-scale {
+                opacity: 1 !important;
+                transform: none !important;
+            }
         }
 
         /* ============================================================
@@ -1076,6 +1356,8 @@
             .grid-cols-4, .grid-cols-3 { grid-template-columns: repeat(2, 1fr); }
 
             .reglement-card { padding: 1.25rem 1.4rem; }
+
+            .access-grid { grid-template-columns: 1fr; }
         }
 
         /* ============================================================
@@ -1085,7 +1367,6 @@
             .container { padding-inline: 1rem; }
             .section-padding { padding-block: 3.5rem; }
 
-            /* Carrousel : ratio vertical plus adapté */
             .carousel-container { aspect-ratio: 4/5; }
             .carousel-content h1 { font-size: 1.6rem; }
             .carousel-content p  { font-size: .9rem; }
@@ -1098,7 +1379,6 @@
             }
             .carousel-nav, .carousel-indicators { display: none !important; }
 
-            /* Grilles → 1 colonne */
             .grid-cols-2, .grid-cols-3, .grid-cols-4,
             footer .grid-cols-3 { grid-template-columns: 1fr; }
 
@@ -1122,7 +1402,6 @@
             .section-actions { margin-top: 2rem; }
             .tarif-table-wrapper::after { display: block; }
 
-            /* Règlement : nav en grille 2 colonnes */
             .reglement-nav {
                 display: grid;
                 grid-template-columns: repeat(2, 1fr);
@@ -1135,19 +1414,32 @@
                 font-size: .82rem;
                 gap: .4rem;
             }
-            .reglement-nav-pill i { display: none; } /* On gagne de la place */
+            .reglement-nav-pill i { display: none; }
 
-            /* Groupe header compact */
             .reglement-group { margin-bottom: 2rem; }
             .reglement-group-header { gap: .75rem; margin-bottom: 1.25rem; }
             .reglement-group-icon { width: 42px; height: 42px; font-size: 1.1rem; }
             .reglement-group-title { font-size: 1.15rem; }
             .reglement-group-count { font-size: .7rem; min-width: 22px; height: 22px; }
 
-            /* Cartes règlement compactes */
             .reglement-card { padding: 1.1rem 1.15rem; border-radius: var(--radius-md); }
             .reglement-card-title { font-size: .98rem; gap: .5rem; }
             .reglement-card-body { font-size: .9rem; line-height: 1.65; }
+
+            /* Feature cards en 1 colonne */
+            .feature-card { padding: 1.5rem 1.25rem; }
+            .feature-icon { width: 52px; height: 52px; font-size: 1.4rem; }
+            .feature-title { font-size: 1.05rem; }
+
+            /* CTA final compact */
+            .cta-final { padding: 2.5rem 1.5rem; border-radius: var(--radius-lg); }
+            .cta-final h2 { font-size: 1.4rem; }
+            .cta-final p { font-size: .95rem; }
+            .cta-final-buttons { flex-direction: column; align-items: stretch; }
+            .cta-final-btn { justify-content: center; }
+
+            .access-card { padding: 1.5rem; }
+            .access-title { font-size: 1.2rem; }
         }
 
         /* ============================================================
@@ -1188,7 +1480,6 @@
             .tarif-section-title { font-size: 1rem; }
             .tarif-table-wrapper::after { font-size: .7rem; }
 
-            /* Règlement : très compact */
             .reglement-group-header { gap: .65rem; margin-bottom: 1rem; }
             .reglement-group-icon { width: 38px; height: 38px; font-size: 1rem; border-radius: 10px; }
             .reglement-group-title { font-size: 1.05rem; gap: .45rem; }
@@ -1215,6 +1506,13 @@
             footer ul { gap: 1rem; }
             .footer-brand-text { font-size: 1.15rem; }
             .social-icon { width: 36px; height: 36px; }
+
+            .feature-card { padding: 1.25rem 1rem; }
+            .feature-icon { width: 48px; height: 48px; font-size: 1.25rem; }
+            .feature-title { font-size: 1rem; }
+
+            .access-card { padding: 1.25rem; }
+            .access-title { font-size: 1.1rem; }
         }
 
         /* ============================================================
@@ -1232,10 +1530,11 @@
         }
 
         /* ============================================================
-           TRÈS LARGE ÉCRAN — Cartes règlement en 2 colonnes
+           TRÈS LARGE ÉCRAN
         ============================================================ */
         @media (min-width: 1440px) {
             .container { max-width: 1400px; }
+            .access-grid { grid-template-columns: 1fr 1fr; }
         }
     </style>
 </head>
@@ -1254,15 +1553,15 @@
 
                 <div class="nav-right">
                     <div class="nav-links">
-                        <a href="#accueil"      class="nav-link">Accueil</a>
-                        <a href="#organisation" class="nav-link">Organisation</a>
-                        <a href="#reglement"    class="nav-link">Règlement</a>
-                        <a href="#tarifs"       class="nav-link">Tarifs</a>
-                        <a href="#annonces"     class="nav-link">Annonces</a>
+                        <a href="#accueil"      class="nav-link" data-spy="accueil">Accueil</a>
+                        <a href="#decouvrir"    class="nav-link" data-spy="decouvrir">Découvrir</a>
+                        <a href="#organisation" class="nav-link" data-spy="organisation">Organisation</a>
+                        <a href="#reglement"    class="nav-link" data-spy="reglement">Règlement</a>
+                        <a href="#tarifs"       class="nav-link" data-spy="tarifs">Tarifs</a>
+                        <a href="#annonces"     class="nav-link" data-spy="annonces">Annonces</a>
                     </div>
 
                     <div class="nav-buttons">
-                        {{-- ✅ Enregistrer : conditionnel --}}
                         @if($showPublicLinks)
                             <a href="{{ route('public.enregistrement.create') }}" class="btn-nav btn-nav-outline">
                                 <i class="fa-solid fa-user-plus" aria-hidden="true"></i> Enregistrer
@@ -1273,7 +1572,6 @@
                             <i class="fa-solid fa-user" aria-hidden="true"></i> Abonnés
                         </a>
 
-                        {{-- ✅ Connexion : bouton mis en avant --}}
                         <a href="{{ url('/login') }}" class="btn-nav btn-nav-login">
                             <i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i> Connexion
                         </a>
@@ -1289,13 +1587,13 @@
 
         <div class="mobile-menu" id="mobileMenu" role="navigation" aria-hidden="true">
             <a href="#accueil"><i class="fa-solid fa-home" aria-hidden="true"></i> Accueil</a>
+            <a href="#decouvrir"><i class="fa-solid fa-gem" aria-hidden="true"></i> Découvrir</a>
             <a href="#organisation"><i class="fa-solid fa-sitemap" aria-hidden="true"></i> Organisation</a>
             <a href="#reglement"><i class="fa-solid fa-gavel" aria-hidden="true"></i> Règlement</a>
             <a href="#tarifs"><i class="fa-solid fa-tag" aria-hidden="true"></i> Tarifs</a>
             <a href="#annonces"><i class="fa-solid fa-bell" aria-hidden="true"></i> Annonces</a>
             <hr>
 
-            {{-- ✅ Enregistrer : conditionnel --}}
             @if($showPublicLinks)
                 <a href="{{ route('public.enregistrement.create') }}">
                     <i class="fa-solid fa-user-plus" aria-hidden="true"></i> Enregistrer
@@ -1306,7 +1604,6 @@
                 <i class="fa-solid fa-user" aria-hidden="true"></i> Espace Abonné
             </a>
 
-            {{-- ✅ Connexion : bouton mis en avant --}}
             <a href="{{ url('/login') }}" class="mobile-cta">
                 <i class="fa-solid fa-right-to-bracket" aria-hidden="true"></i> Connexion
             </a>
@@ -1345,7 +1642,6 @@
                                 <i class="fa-solid {{ $ctaIcon }}" aria-hidden="true"></i> {{ $ctaLabel }}
                             </a>
 
-                            {{-- ✅ Enregistrer : conditionnel --}}
                             @if($showPublicLinks)
                                 <a href="{{ route('public.enregistrement.create') }}" class="carousel-btn carousel-btn-secondary">
                                     <i class="fa-solid fa-user-plus" aria-hidden="true"></i> Enregistrer
@@ -1394,17 +1690,185 @@
         @endif
     </section>
 
+    {{-- ============================================================
+         ✅ NOUVELLE SECTION — DÉCOUVRIR LA PLATEFORME
+         Explication claire de ce que fait le site
+    ============================================================ --}}
+    <section id="decouvrir" class="section-padding section-alt cv-auto">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title reveal-up">Découvrez notre plateforme</h2>
+                <p class="section-subtitle reveal-up reveal-delay-1">
+                    Un espace numérique pensé pour les élèves, les parents et l'établissement
+                </p>
+            </div>
+
+            <div class="grid grid-cols-4">
+                {{-- Carte 1 : Proclamations --}}
+                <article class="feature-card reveal-up reveal-delay-1">
+                    <div class="feature-icon is-indigo" aria-hidden="true">
+                        <i class="fa-solid fa-trophy"></i>
+                    </div>
+                    <h3 class="feature-title">Proclamations & Résultats</h3>
+                    <p class="feature-text">
+                        Consultez les classements et proclamations publiés après chaque évaluation.
+                        Suivez les performances des élèves par classe et par période, en toute transparence.
+                    </p>
+                </article>
+
+                {{-- Carte 2 : Annonces --}}
+                <article class="feature-card reveal-up reveal-delay-2">
+                    <div class="feature-icon is-emerald" aria-hidden="true">
+                        <i class="fa-solid fa-bullhorn"></i>
+                    </div>
+                    <h3 class="feature-title">Annonces & Communiqués</h3>
+                    <p class="feature-text">
+                        Restez informé en temps réel : communiqués officiels, alertes importantes,
+                        actualités de l'établissement et informations pratiques pour toute la communauté.
+                    </p>
+                </article>
+
+                {{-- Carte 3 : Liste élèves --}}
+                <article class="feature-card reveal-up reveal-delay-3">
+                    <div class="feature-icon is-amber" aria-hidden="true">
+                        <i class="fa-solid fa-users-viewfinder"></i>
+                    </div>
+                    <h3 class="feature-title">Liste des élèves inscrits</h3>
+                    <p class="feature-text">
+                        Les parents peuvent vérifier que leur enfant est bien inscrit dans la salle
+                        de classe correspondante, avec les informations d'inscription et de frais.
+                    </p>
+                </article>
+
+                {{-- Carte 4 : Inscription en ligne --}}
+                <article class="feature-card reveal-up reveal-delay-4">
+                    <div class="feature-icon is-rose" aria-hidden="true">
+                        <i class="fa-solid fa-user-plus"></i>
+                    </div>
+                    <h3 class="feature-title">Pré-inscription en ligne</h3>
+                    <p class="feature-text">
+                        Enregistrez votre enfant en ligne en quelques minutes. La finalisation
+                        de l'inscription se fait ensuite sur place, à l'établissement, sans file d'attente.
+                    </p>
+                </article>
+            </div>
+        </div>
+    </section>
+
+    {{-- ============================================================
+         ✅ NOUVELLE SECTION — PUBLIC vs ABONNÉS
+         Tableau comparatif clair
+    ============================================================ --}}
+    <section id="acces" class="section-padding cv-auto">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title reveal-up">Ce que vous pouvez faire</h2>
+                <p class="section-subtitle reveal-up reveal-delay-1">
+                    Un accès public pour découvrir, un espace abonné pour tout suivre en détail
+                </p>
+            </div>
+
+            <div class="access-grid">
+                {{-- Carte PUBLIC --}}
+                <div class="access-card is-public reveal-left">
+                    <span class="access-badge">
+                        <i class="fa-solid fa-globe"></i> Accès public
+                    </span>
+                    <h3 class="access-title">Découvrir l'école</h3>
+                    <p class="access-desc">
+                        Accessible à tous, sans inscription. Idéal pour découvrir l'établissement
+                        et ses activités avant de s'engager.
+                    </p>
+                    <div class="access-list">
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Consulter la présentation de l'école et son organisation</span>
+                        </div>
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Voir les annonces et communiqués publics</span>
+                        </div>
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Consulter les proclamations et classements publiés</span>
+                        </div>
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Vérifier la liste des élèves inscrits par salle</span>
+                        </div>
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Découvrir les tarifs d'inscription et frais annuels</span>
+                        </div>
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Pré-inscrire un élève en ligne (finalisation sur place)</span>
+                        </div>
+                    </div>
+                </div>
+
+                {{-- Carte ABONNÉS --}}
+                <div class="access-card is-member reveal-right">
+                    <span class="access-badge">
+                        <i class="fa-solid fa-star"></i> Espace abonné
+                    </span>
+                    <h3 class="access-title">Suivre en détail</h3>
+                    <p class="access-desc">
+                        Réservé aux parents abonnés. Recevez toutes les informations en temps réel
+                        et suivez la scolarité de votre enfant pas à pas.
+                    </p>
+                    <div class="access-list">
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Recevoir toutes les annonces et alertes en temps réel</span>
+                        </div>
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Accéder aux résultats détaillés de votre enfant</span>
+                        </div>
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Consulter les bulletins et classements personnalisés</span>
+                        </div>
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Suivre les paiements et l'état d'inscription</span>
+                        </div>
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Communiquer directement avec l'administration</span>
+                        </div>
+                        <div class="access-item">
+                            <i class="fa-solid fa-circle-check"></i>
+                            <span>Être notifié en priorité des événements importants</span>
+                        </div>
+                    </div>
+
+                    @guest('contact')
+                        <a href="{{ route('external.register') }}" class="access-cta">
+                            <i class="fa-solid fa-user-plus"></i> S'abonner maintenant
+                        </a>
+                    @else
+                        <a href="{{ route('external.dashboard') }}" class="access-cta">
+                            <i class="fa-solid fa-arrow-right"></i> Accéder à mon espace
+                        </a>
+                    @endguest
+                </div>
+            </div>
+        </div>
+    </section>
+
     {{-- ====== ANNONCES ====== --}}
     @if(isset($annonces) && $annonces->isNotEmpty())
         <section id="annonces" class="section-padding section-alt cv-auto">
             <div class="container">
                 <div class="section-header">
-                    <h2 class="section-title reveal">Actualités &amp; Annonces</h2>
-                    <p class="section-subtitle reveal">Restez informé des dernières informations importantes</p>
+                    <h2 class="section-title reveal-up">Actualités &amp; Annonces</h2>
+                    <p class="section-subtitle reveal-up reveal-delay-1">Restez informé des dernières informations importantes</p>
                 </div>
                 <div class="grid grid-cols-3">
                     @foreach($annonces as $annonce)
-                        <article class="annonce-card reveal">
+                        <article class="annonce-card reveal-up reveal-delay-{{ ($loop->iteration % 3) + 1 }}">
                             <div class="annonce-card-header">
                                 <div class="annonce-icon" aria-hidden="true">
                                     <i class="fa-solid fa-lightbulb"></i>
@@ -1430,7 +1894,7 @@
                     @endforeach
                 </div>
                 <div class="section-actions">
-                    <a href="{{ route('annonces') }}" class="btn-nav btn-nav-primary">
+                    <a href="{{ route('annonces') }}" class="btn-nav btn-nav-primary reveal-up">
                         <i class="fa-solid fa-arrow-right" aria-hidden="true"></i> Voir toutes les annonces
                     </a>
                 </div>
@@ -1442,12 +1906,12 @@
     <section id="organisation" class="section-padding cv-auto">
         <div class="container">
             <div class="section-header">
-                <h2 class="section-title reveal">Notre Structure</h2>
-                <p class="section-subtitle reveal">Explorez nos différents niveaux et sections pédagogiques</p>
+                <h2 class="section-title reveal-up">Notre Structure</h2>
+                <p class="section-subtitle reveal-up reveal-delay-1">Explorez nos différents niveaux et sections pédagogiques</p>
             </div>
             <div class="grid grid-cols-4">
                 @if(isset($anneesScolaires) && $anneesScolaires->isNotEmpty())
-                    <div class="org-card reveal">
+                    <div class="org-card reveal-up reveal-delay-1">
                         <div class="org-icon" aria-hidden="true"><i class="fa-solid fa-calendar-days"></i></div>
                         <h3>Années Scolaires</h3>
                         <ul>
@@ -1458,7 +1922,7 @@
                     </div>
                 @endif
                 @if(isset($sessions) && $sessions->isNotEmpty())
-                    <div class="org-card reveal">
+                    <div class="org-card reveal-up reveal-delay-2">
                         <div class="org-icon" aria-hidden="true"><i class="fa-solid fa-layer-group"></i></div>
                         <h3>Sessions</h3>
                         <ul>
@@ -1469,7 +1933,7 @@
                     </div>
                 @endif
                 @if(isset($sections) && $sections->isNotEmpty())
-                    <div class="org-card reveal">
+                    <div class="org-card reveal-up reveal-delay-3">
                         <div class="org-icon" aria-hidden="true"><i class="fa-solid fa-building"></i></div>
                         <h3>Sections</h3>
                         <ul>
@@ -1480,7 +1944,7 @@
                     </div>
                 @endif
                 @if(isset($options) && $options->isNotEmpty())
-                    <div class="org-card reveal">
+                    <div class="org-card reveal-up reveal-delay-4">
                         <div class="org-icon" aria-hidden="true"><i class="fa-solid fa-sliders"></i></div>
                         <h3>Options</h3>
                         <ul>
@@ -1492,7 +1956,7 @@
                 @endif
             </div>
             <div class="section-actions">
-                <a href="{{ route('public.inscriptions') }}" class="btn-nav btn-nav-primary">
+                <a href="{{ route('public.inscriptions') }}" class="btn-nav btn-nav-primary reveal-up">
                     <i class="fa-solid fa-book" aria-hidden="true"></i> Voir les classes disponibles
                 </a>
             </div>
@@ -1500,20 +1964,19 @@
     </section>
 
     {{-- ============================================================
-         RÈGLEMENT INTÉRIEUR — Section soignée
+         RÈGLEMENT INTÉRIEUR
          ============================================================ --}}
     @if($hasAnyReglement)
         <section id="reglement" class="section-padding section-alt cv-auto">
             <div class="container">
                 <div class="section-header">
-                    <h2 class="section-title reveal">Règlement intérieur</h2>
-                    <p class="section-subtitle reveal">
+                    <h2 class="section-title reveal-up">Règlement intérieur</h2>
+                    <p class="section-subtitle reveal-up reveal-delay-1">
                         Les règles de vie à connaître et à respecter au sein de l'établissement
                     </p>
                 </div>
 
-                {{-- Navigation rapide entre les 3 catégories --}}
-                <nav class="reglement-nav reveal" aria-label="Navigation rapide entre les catégories">
+                <nav class="reglement-nav reveal-up" aria-label="Navigation rapide entre les catégories">
                     @if($hasRegles)
                         <a href="#reglement-regles" class="reglement-nav-pill is-blue">
                             <i class="fa-solid fa-list-check" aria-hidden="true"></i>
@@ -1537,10 +2000,9 @@
                     @endif
                 </nav>
 
-                {{-- Groupe 1 : Règles à suivre --}}
                 @if($hasRegles)
                     <div class="reglement-group" id="reglement-regles">
-                        <header class="reglement-group-header reveal">
+                        <header class="reglement-group-header reveal-up">
                             <div class="reglement-group-icon is-blue" aria-hidden="true">
                                 <i class="fa-solid fa-list-check"></i>
                             </div>
@@ -1551,7 +2013,7 @@
                         </header>
                         <div class="reglement-list">
                             @foreach($reglements['regles'] as $regle)
-                                <article class="reglement-card is-blue reveal">
+                                <article class="reglement-card is-blue reveal-up reveal-delay-{{ min($loop->iteration, 5) }}">
                                     <h4 class="reglement-card-title">
                                         <i class="fa-solid fa-circle-check" aria-hidden="true"></i>
                                         <span>{{ $regle->titre }}</span>
@@ -1565,10 +2027,9 @@
                     </div>
                 @endif
 
-                {{-- Groupe 2 : Obligations --}}
                 @if($hasObligations)
                     <div class="reglement-group" id="reglement-obligations">
-                        <header class="reglement-group-header reveal">
+                        <header class="reglement-group-header reveal-up">
                             <div class="reglement-group-icon is-amber" aria-hidden="true">
                                 <i class="fa-solid fa-circle-exclamation"></i>
                             </div>
@@ -1579,7 +2040,7 @@
                         </header>
                         <div class="reglement-list">
                             @foreach($reglements['obligations'] as $obligation)
-                                <article class="reglement-card is-amber reveal">
+                                <article class="reglement-card is-amber reveal-up reveal-delay-{{ min($loop->iteration, 5) }}">
                                     <h4 class="reglement-card-title">
                                         <i class="fa-solid fa-bullhorn" aria-hidden="true"></i>
                                         <span>{{ $obligation->titre }}</span>
@@ -1593,10 +2054,9 @@
                     </div>
                 @endif
 
-                {{-- Groupe 3 : Interdictions --}}
                 @if($hasInterdictions)
                     <div class="reglement-group" id="reglement-interdictions">
-                        <header class="reglement-group-header reveal">
+                        <header class="reglement-group-header reveal-up">
                             <div class="reglement-group-icon is-red" aria-hidden="true">
                                 <i class="fa-solid fa-ban"></i>
                             </div>
@@ -1607,7 +2067,7 @@
                         </header>
                         <div class="reglement-list">
                             @foreach($reglements['interdictions'] as $interdiction)
-                                <article class="reglement-card is-red reveal">
+                                <article class="reglement-card is-red reveal-up reveal-delay-{{ min($loop->iteration, 5) }}">
                                     <h4 class="reglement-card-title">
                                         <i class="fa-solid fa-times-circle" aria-hidden="true"></i>
                                         <span>{{ $interdiction->titre }}</span>
@@ -1629,11 +2089,11 @@
         <section id="tarifs" class="section-padding cv-auto">
             <div class="container">
                 <div class="section-header">
-                    <h2 class="section-title reveal">Tarification</h2>
-                    <p class="section-subtitle reveal">Consultez nos frais d'inscription et tarifs annuels</p>
+                    <h2 class="section-title reveal-up">Tarification</h2>
+                    <p class="section-subtitle reveal-up reveal-delay-1">Consultez nos frais d'inscription et tarifs annuels</p>
                 </div>
 
-                <div class="reveal" style="text-align:center; margin-bottom:2rem;">
+                <div class="reveal-scale" style="text-align:center; margin-bottom:2rem;">
                     <span class="taux-badge">
                         <i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i>
                         Taux de change appliqué&nbsp;:
@@ -1642,7 +2102,7 @@
                 </div>
 
                 @foreach($sallesParSection as $sectionNom => $salles)
-                    <div class="reveal">
+                    <div class="reveal-up">
                         <h3 class="tarif-section-title">{{ $sectionNom }}</h3>
                         <div class="tarif-table-wrapper">
                             <table class="tarif-table">
@@ -1677,11 +2137,41 @@
         </section>
     @endif
 
+    {{-- ============================================================
+         ✅ NOUVELLE SECTION — CTA FINAL
+         Invitation à s'abonner
+    ============================================================ --}}
+    <section class="section-padding cv-auto">
+        <div class="container">
+            <div class="cta-final reveal-scale">
+                <h2>Prêt à suivre la scolarité de votre enfant ?</h2>
+                <p>
+                    Abonnez-vous pour recevoir toutes les annonces en temps réel, consulter
+                    les résultats détaillés et rester en contact direct avec l'établissement.
+                </p>
+                <div class="cta-final-buttons">
+                    @guest('contact')
+                        <a href="{{ route('external.register') }}" class="cta-final-btn cta-final-btn-primary">
+                            <i class="fa-solid fa-user-plus"></i> S'abonner gratuitement
+                        </a>
+                        <a href="{{ route('external.login') }}" class="cta-final-btn cta-final-btn-outline">
+                            <i class="fa-solid fa-right-to-bracket"></i> Se connecter
+                        </a>
+                    @else
+                        <a href="{{ route('external.dashboard') }}" class="cta-final-btn cta-final-btn-primary">
+                            <i class="fa-solid fa-user-circle"></i> Accéder à mon espace
+                        </a>
+                    @endguest
+                </div>
+            </div>
+        </div>
+    </section>
+
     {{-- ====== FOOTER ====== --}}
     <footer class="cv-auto">
         <div class="container">
             <div class="grid grid-cols-3" style="margin-bottom:3rem;">
-                <div>
+                <div class="reveal-up">
                     <div class="footer-brand">
                         <div class="logo-icon" aria-hidden="true">{{ mb_substr($settings->site_name, 0, 1) }}</div>
                         <span class="footer-brand-text">{{ $settings->site_name }}</span>
@@ -1696,7 +2186,7 @@
                         <strong>Directeur :</strong> {{ $settings->responsable_name }}
                     </p>
                 </div>
-                <div>
+                <div class="reveal-up reveal-delay-1">
                     <h3>Nous Contacter</h3>
                     <ul>
                         <li><i class="fa-solid fa-envelope" aria-hidden="true"></i> <a href="mailto:{{ $settings->site_email }}">{{ $settings->site_email }}</a></li>
@@ -1704,12 +2194,11 @@
                         <li><i class="fa-solid fa-map-marker-alt" aria-hidden="true"></i> {{ $settings->site_address }}</li>
                     </ul>
                 </div>
-                <div>
+                <div class="reveal-up reveal-delay-2">
                     <h3>Accès Rapide</h3>
                     <ul>
                         @if($showPublicLinks)
                             <li><a href="{{ route('public.inscriptions') }}">📚 Voir les classes</a></li>
-                            <li><a href="{{ route('public.paiements') }}">💰 Suivi des paiements</a></li>
                             <li><a href="{{ route('public.classement') }}">🏆 Classements</a></li>
                             <li><a href="{{ route('public.enregistrement.create') }}">✍️ Enregistrer un élève</a></li>
                         @endif
@@ -1864,9 +2353,11 @@
             if (carouselEl) new Carousel(carouselEl);
 
             /* ============================================================
-               NAVBAR SCROLL
+               NAVBAR SCROLL — Ajout effet ombre + scroll-spy
             ============================================================ */
             const navbar = $('#navbar');
+            const navLinks = $$('.nav-link[data-spy]');
+
             if (navbar) {
                 let ticking = false;
                 window.addEventListener('scroll', () => {
@@ -1880,9 +2371,45 @@
             }
 
             /* ============================================================
-               REVEAL ANIMATIONS
+               ✅ SCROLL-SPY — Détecte la section active
             ============================================================ */
-            const revealEls = $$('.reveal');
+            if (navLinks.length && 'IntersectionObserver' in window) {
+                const sections = navLinks
+                    .map(link => document.getElementById(link.dataset.spy))
+                    .filter(Boolean);
+
+                const spyObserver = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            const id = entry.target.id;
+                            navLinks.forEach(link => {
+                                link.classList.toggle('active', link.dataset.spy === id);
+                            });
+                        }
+                    });
+                }, {
+                    rootMargin: '-80px 0px -60% 0px',
+                    threshold: 0
+                });
+
+                sections.forEach(section => spyObserver.observe(section));
+            }
+
+            /* ============================================================
+               ✅ ANIMATIONS DE SCROLL AMÉLIORÉES
+               Supporte reveal, reveal-up, reveal-down, reveal-left,
+               reveal-right, reveal-scale
+            ============================================================ */
+            const revealSelectors = [
+                '.reveal',
+                '.reveal-up',
+                '.reveal-down',
+                '.reveal-left',
+                '.reveal-right',
+                '.reveal-scale'
+            ].join(',');
+
+            const revealEls = $$(revealSelectors);
 
             if (!prefersReducedMotion && 'IntersectionObserver' in window && revealEls.length) {
                 const io = new IntersectionObserver((entries) => {
@@ -1892,12 +2419,12 @@
                             io.unobserve(entry.target);
                         }
                     });
-                }, { threshold: 0.1, rootMargin: '0px 0px -50px 0px' });
-
-                revealEls.forEach((el, i) => {
-                    el.style.transitionDelay = `${Math.min(i * 0.05, 0.5)}s`;
-                    io.observe(el);
+                }, {
+                    threshold: 0.12,
+                    rootMargin: '0px 0px -60px 0px'
                 });
+
+                revealEls.forEach(el => io.observe(el));
             } else {
                 revealEls.forEach(el => el.classList.add('visible'));
             }

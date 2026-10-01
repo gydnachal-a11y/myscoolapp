@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Builder;
@@ -12,12 +14,12 @@ class Paiement extends Model
     // ============================================================
     // CONSTANTES — Statuts
     // ============================================================
+
     public const STATUT_IMPAYE  = 'impaye';
     public const STATUT_PARTIEL = 'partiel';
     public const STATUT_PAYE    = 'paye';
     public const STATUT_SURPAYE = 'surpaye';
 
-    /** Liste des statuts valides (pour la validation). */
     public const STATUTS = [
         self::STATUT_IMPAYE,
         self::STATUT_PARTIEL,
@@ -25,9 +27,16 @@ class Paiement extends Model
         self::STATUT_SURPAYE,
     ];
 
+    /** Statuts considérés comme « non soldés ». */
+    public const STATUTS_EN_ATTENTE = [
+        self::STATUT_IMPAYE,
+        self::STATUT_PARTIEL,
+    ];
+
     // ============================================================
     // CONSTANTES — Modes de période
     // ============================================================
+
     public const MODE_MENSUEL = 'mensuel';
     public const MODE_TRANCHE = 'tranche';
 
@@ -35,6 +44,10 @@ class Paiement extends Model
         self::MODE_MENSUEL,
         self::MODE_TRANCHE,
     ];
+
+    // ============================================================
+    // CONFIGURATION
+    // ============================================================
 
     protected $fillable = [
         'eleve_id',
@@ -64,25 +77,24 @@ class Paiement extends Model
         'montant_restant_fc'  => 'float',
     ];
 
-    /**
-     * Attributs calculés à exposer en JSON / API.
-     */
     protected $appends = [
         'montant_attendu_usd_formate',
         'montant_paye_usd_formate',
         'montant_restant_usd_formate',
+        'pourcentage_paye',
     ];
 
     // ============================================================
-    // BOOT — Recalcul automatique des montants et du statut
+    // BOOT — Calculs automatiques
     // ============================================================
+
     protected static function booted(): void
     {
-        static::saving(function (Paiement $paiement) {
+        static::saving(function (self $paiement): void {
             $paiement->recalculerMontants();
 
-            // Date par défaut : aujourd'hui si non fournie
-            if (empty($paiement->date_paiement) && $paiement->montant_paye_usd > 0) {
+            // Date par défaut si un paiement est enregistré
+            if (empty($paiement->date_paiement) && (float) $paiement->montant_paye_usd > 0) {
                 $paiement->date_paiement = now()->toDateString();
             }
         });
@@ -167,7 +179,15 @@ class Paiement extends Model
     }
 
     /**
-     * Recherche par nom/prénom d'élève.
+     * Paiements non soldés (impayé ou partiel).
+     */
+    public function scopeEnAttente(Builder $query): Builder
+    {
+        return $query->whereIn('statut', self::STATUTS_EN_ATTENTE);
+    }
+
+    /**
+     * Recherche par nom/prénom/postnom d'élève.
      */
     public function scopeRecherche(Builder $query, string $search): Builder
     {
@@ -177,73 +197,65 @@ class Paiement extends Model
             return $query;
         }
 
-        return $query->whereHas('eleve', function (Builder $q) use ($search) {
+        return $query->whereHas('eleve', function (Builder $q) use ($search): void {
             $q->where('nom', 'LIKE', "%{$search}%")
               ->orWhere('prenom', 'LIKE', "%{$search}%")
               ->orWhere('postnom', 'LIKE', "%{$search}%");
         });
     }
 
-    /**
-     * Un paiement en attente (impayé ou partiel).
-     */
-    public function scopeEnAttente(Builder $query): Builder
-    {
-        return $query->whereIn('statut', [self::STATUT_IMPAYE, self::STATUT_PARTIEL]);
-    }
-
     // ============================================================
-    // ACCESSORS — Montants formatés
+    // ACCESSORS
     // ============================================================
 
     protected function montantAttenduUsdFormate(): Attribute
     {
-        return Attribute::get(fn () => number_format((float) $this->montant_attendu_usd, 0, ',', ' '));
+        return Attribute::get(fn (): string => number_format((float) $this->montant_attendu_usd, 0, ',', ' '));
     }
 
     protected function montantPayeUsdFormate(): Attribute
     {
-        return Attribute::get(fn () => number_format((float) $this->montant_paye_usd, 0, ',', ' '));
+        return Attribute::get(fn (): string => number_format((float) $this->montant_paye_usd, 0, ',', ' '));
     }
 
     protected function montantRestantUsdFormate(): Attribute
     {
-        return Attribute::get(fn () => number_format((float) $this->montant_restant_usd, 0, ',', ' '));
+        return Attribute::get(fn (): string => number_format((float) $this->montant_restant_usd, 0, ',', ' '));
     }
 
     protected function montantAttenduFcFormate(): Attribute
     {
-        return Attribute::get(fn () => number_format((float) $this->montant_attendu_fc, 0, ',', ' '));
+        return Attribute::get(fn (): string => number_format((float) $this->montant_attendu_fc, 0, ',', ' '));
     }
 
     protected function montantPayeFcFormate(): Attribute
     {
-        return Attribute::get(fn () => number_format((float) $this->montant_paye_fc, 0, ',', ' '));
+        return Attribute::get(fn (): string => number_format((float) $this->montant_paye_fc, 0, ',', ' '));
     }
 
     protected function montantRestantFcFormate(): Attribute
     {
-        return Attribute::get(fn () => number_format((float) $this->montant_restant_fc, 0, ',', ' '));
+        return Attribute::get(fn (): string => number_format((float) $this->montant_restant_fc, 0, ',', ' '));
     }
 
     /**
-     * Taux d'avancement du paiement (0-100 %).
+     * Pourcentage payé (0 à 100).
      */
     protected function pourcentagePaye(): Attribute
     {
-        return Attribute::get(function () {
+        return Attribute::get(function (): float {
             $attendu = (float) $this->montant_attendu_usd;
 
             if ($attendu <= 0) {
-                return 0;
+                return 0.0;
             }
 
-            return min(100, round(($this->montant_paye_usd / $attendu) * 100, 1));
+            return min(100.0, round(($this->montant_paye_usd / $attendu) * 100, 1));
         });
     }
 
     // ============================================================
-    // MÉTHODES UTILITAIRES
+    // MÉTHODES MÉTIER — Statut
     // ============================================================
 
     public function estPaye(): bool
@@ -266,22 +278,36 @@ class Paiement extends Model
         return $this->statut === self::STATUT_SURPAYE;
     }
 
+    public function estEnAttente(): bool
+    {
+        return in_array($this->statut, self::STATUTS_EN_ATTENTE, true);
+    }
+
+    public function estSolde(): bool
+    {
+        return $this->estPaye() || $this->estSurpaye();
+    }
+
+    // ============================================================
+    // MÉTHODES MÉTIER — Calculs
+    // ============================================================
+
     /**
-     * Recalcule tous les montants restants et le statut.
-     * Appelé automatiquement au `saving` + utilisable manuellement.
+     * Recalcule les montants restants et met à jour le statut.
+     * Appelé automatiquement au `saving`.
      */
     public function recalculerMontants(): void
     {
         $attenduUsd = (float) $this->montant_attendu_usd;
         $payeUsd    = (float) $this->montant_paye_usd;
 
-        // Restant USD (jamais négatif)
         $this->montant_restant_usd = max(0, $attenduUsd - $payeUsd);
 
-        // Restant FC (si le champ est présent)
+        // Recalcul FC uniquement si l'un des deux champs est renseigné
         if ($this->montant_attendu_fc !== null || $this->montant_paye_fc !== null) {
             $attenduFc = (float) ($this->montant_attendu_fc ?? 0);
             $payeFc    = (float) ($this->montant_paye_fc ?? 0);
+
             $this->montant_restant_fc = max(0, $attenduFc - $payeFc);
         }
 
@@ -289,9 +315,9 @@ class Paiement extends Model
     }
 
     /**
-     * Détermine le statut en fonction des montants.
+     * Détermine le statut en fonction des montants attendu/payé.
      */
-    private function determinerStatut(): string
+    public function determinerStatut(): string
     {
         $attendu = (float) $this->montant_attendu_usd;
         $paye    = (float) $this->montant_paye_usd;
@@ -306,5 +332,39 @@ class Paiement extends Model
         }
 
         return $paye > 0 ? self::STATUT_PARTIEL : self::STATUT_IMPAYE;
+    }
+
+    /**
+     * Ajoute un montant payé au paiement existant et sauvegarde.
+     */
+    public function ajouterPaiement(float $montantUsd, ?float $montantFc = null): self
+    {
+        $this->montant_paye_usd += $montantUsd;
+
+        if ($montantFc !== null) {
+            $this->montant_paye_fc = (float) $this->montant_paye_fc + $montantFc;
+        }
+
+        $this->date_paiement = now()->toDateString();
+        $this->save();
+
+        return $this;
+    }
+
+    // ============================================================
+    // LABELS
+    // ============================================================
+
+    /**
+     * Libellé lisible du statut.
+     */
+    public function getStatutLibelleAttribute(): string
+    {
+        return match ($this->statut) {
+            self::STATUT_PAYE    => 'Payé',
+            self::STATUT_PARTIEL => 'Partiel',
+            self::STATUT_SURPAYE => 'Surpayé',
+            default              => 'Impayé',
+        };
     }
 }
