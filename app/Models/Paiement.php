@@ -6,11 +6,20 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Paiement extends Model
 {
+    use HasFactory;
+
+    // ============================================================
+    // TABLE
+    // ============================================================
+
+    protected $table = 'paiements';
+
     // ============================================================
     // CONSTANTES — Statuts
     // ============================================================
@@ -31,6 +40,12 @@ class Paiement extends Model
     public const STATUTS_EN_ATTENTE = [
         self::STATUT_IMPAYE,
         self::STATUT_PARTIEL,
+    ];
+
+    /** Statuts considérés comme « soldés ». */
+    public const STATUTS_SOLDES = [
+        self::STATUT_PAYE,
+        self::STATUT_SURPAYE,
     ];
 
     // ============================================================
@@ -67,7 +82,17 @@ class Paiement extends Model
         'commentaire',
     ];
 
+    /**
+     * ✅ Les casts assurent la conversion automatique :
+     *    - `eleve_id` : string "546" → int 546 à la lecture
+     *    - Plus besoin d'accessor défensif (voir FIX en bas de fichier)
+     */
     protected $casts = [
+        'id'                  => 'integer',
+        'eleve_id'            => 'integer',
+        'annee_scolaire_id'   => 'integer',
+        'salle_classe_id'     => 'integer',
+        'session_paiement_id' => 'integer',
         'date_paiement'       => 'date',
         'montant_attendu_usd' => 'float',
         'montant_attendu_fc'  => 'float',
@@ -81,7 +106,11 @@ class Paiement extends Model
         'montant_attendu_usd_formate',
         'montant_paye_usd_formate',
         'montant_restant_usd_formate',
+        'montant_attendu_fc_formate',
+        'montant_paye_fc_formate',
+        'montant_restant_fc_formate',
         'pourcentage_paye',
+        'statut_libelle',
     ];
 
     // ============================================================
@@ -101,17 +130,17 @@ class Paiement extends Model
     }
 
     // ============================================================
-    // RELATIONS
+    // RELATIONS — Clés étrangères EXPLICITES
     // ============================================================
 
     public function eleve(): BelongsTo
     {
-        return $this->belongsTo(Eleve::class);
+        return $this->belongsTo(Eleve::class, 'eleve_id');
     }
 
     public function anneeScolaire(): BelongsTo
     {
-        return $this->belongsTo(AnneeScolaire::class);
+        return $this->belongsTo(AnneeScolaire::class, 'annee_scolaire_id');
     }
 
     public function salleClasse(): BelongsTo
@@ -143,9 +172,24 @@ class Paiement extends Model
         return $query->where('eleve_id', $eleveId);
     }
 
+    public function scopeSession(Builder $query, int $sessionId): Builder
+    {
+        return $query->where('session_paiement_id', $sessionId);
+    }
+
+    public function scopeTypePeriode(Builder $query, string $type): Builder
+    {
+        return $query->where('type_periode', $type);
+    }
+
     public function scopeStatut(Builder $query, string $statut): Builder
     {
         return $query->where('statut', $statut);
+    }
+
+    public function scopeStatuts(Builder $query, array $statuts): Builder
+    {
+        return $query->whereIn('statut', $statuts);
     }
 
     public function scopePaye(Builder $query): Builder
@@ -187,25 +231,76 @@ class Paiement extends Model
     }
 
     /**
+     * Paiements soldés (payé ou surpayé).
+     */
+    public function scopeSoldes(Builder $query): Builder
+    {
+        return $query->whereIn('statut', self::STATUTS_SOLDES);
+    }
+
+    /**
+     * Eager-loading helper : évite d'oublier `->with('eleve')` partout.
+     */
+    public function scopeWithEleve(Builder $query): Builder
+    {
+        return $query->with(['eleve:id,nom,prenom,postnom,sexe']);
+    }
+
+    /**
+     * Sélection sécurisée : garantit que `eleve_id` est toujours présent
+     * pour ne pas casser le eager-loading de `eleve`.
+     */
+    public function scopeSelectSafe(Builder $query, array $columns = ['*']): Builder
+    {
+        if ($columns === ['*']) {
+            return $query->select('*');
+        }
+
+        if (!in_array('eleve_id', $columns, true)) {
+            $columns[] = 'eleve_id';
+        }
+
+        return $query->select($columns);
+    }
+
+    /**
      * Recherche par nom/prénom/postnom d'élève.
      */
-    public function scopeRecherche(Builder $query, string $search): Builder
+    public function scopeRecherche(Builder $query, ?string $search): Builder
     {
-        $search = trim($search);
+        $search = trim((string) $search);
 
         if ($search === '') {
             return $query;
         }
 
         return $query->whereHas('eleve', function (Builder $q) use ($search): void {
-            $q->where('nom', 'LIKE', "%{$search}%")
-              ->orWhere('prenom', 'LIKE', "%{$search}%")
-              ->orWhere('postnom', 'LIKE', "%{$search}%");
+            $q->where(function (Builder $inner) use ($search): void {
+                $inner->where('nom', 'LIKE', "%{$search}%")
+                      ->orWhere('prenom', 'LIKE', "%{$search}%")
+                      ->orWhere('postnom', 'LIKE', "%{$search}%");
+            });
         });
     }
 
+    /**
+     * Filtre par plage de dates de paiement.
+     */
+    public function scopeEntreDates(Builder $query, ?string $debut, ?string $fin): Builder
+    {
+        if ($debut) {
+            $query->where('date_paiement', '>=', $debut);
+        }
+
+        if ($fin) {
+            $query->where('date_paiement', '<=', $fin);
+        }
+
+        return $query;
+    }
+
     // ============================================================
-    // ACCESSORS
+    // ACCESSORS — Montants formatés
     // ============================================================
 
     protected function montantAttenduUsdFormate(): Attribute
@@ -250,7 +345,20 @@ class Paiement extends Model
                 return 0.0;
             }
 
-            return min(100.0, round(($this->montant_paye_usd / $attendu) * 100, 1));
+            return min(100.0, round(((float) $this->montant_paye_usd / $attendu) * 100, 1));
+        });
+    }
+
+    /**
+     * Libellé lisible du statut.
+     */
+    protected function statutLibelle(): Attribute
+    {
+        return Attribute::get(fn (): string => match ($this->statut) {
+            self::STATUT_PAYE    => 'Payé',
+            self::STATUT_PARTIEL => 'Partiel',
+            self::STATUT_SURPAYE => 'Surpayé',
+            default              => 'Impayé',
         });
     }
 
@@ -285,7 +393,7 @@ class Paiement extends Model
 
     public function estSolde(): bool
     {
-        return $this->estPaye() || $this->estSurpaye();
+        return in_array($this->statut, self::STATUTS_SOLDES, true);
     }
 
     // ============================================================
@@ -339,7 +447,7 @@ class Paiement extends Model
      */
     public function ajouterPaiement(float $montantUsd, ?float $montantFc = null): self
     {
-        $this->montant_paye_usd += $montantUsd;
+        $this->montant_paye_usd = (float) $this->montant_paye_usd + $montantUsd;
 
         if ($montantFc !== null) {
             $this->montant_paye_fc = (float) $this->montant_paye_fc + $montantFc;
@@ -352,19 +460,51 @@ class Paiement extends Model
     }
 
     // ============================================================
-    // LABELS
+    // HELPERS
     // ============================================================
 
     /**
-     * Libellé lisible du statut.
+     * Retourne true si le paiement est soldé (payé ou surpayé).
      */
-    public function getStatutLibelleAttribute(): string
+    public function isSolde(): bool
     {
-        return match ($this->statut) {
-            self::STATUT_PAYE    => 'Payé',
-            self::STATUT_PARTIEL => 'Partiel',
-            self::STATUT_SURPAYE => 'Surpayé',
-            default              => 'Impayé',
-        };
+        return $this->estSolde();
     }
+
+    /**
+     * Retourne true si le paiement est en retard.
+     */
+    public function estEnRetard(): bool
+    {
+        return $this->estEnAttente()
+            && $this->date_paiement === null;
+    }
+
+    /* ============================================================
+       🚨 SUPPRIMÉ — NE PAS RECRÉER CET ACCESSOR
+       ============================================================
+       
+       L'accessor `getEleveIdAttribute(): ?int` a été SUPPRIMÉ car :
+       
+       1. Il était REDONDANT : `$casts['eleve_id'] = 'integer'` fait déjà 
+          la conversion automatiquement.
+       
+       2. Il CAUSAIT l'erreur :
+          `Return value must be of type ?int, string returned`
+          → avec `declare(strict_types=1)`, PHP refuse de retourner 
+            un string `"546"` depuis une méthode typée `?int`.
+       
+       3. La solution propre = laisser `$casts` faire son travail.
+       
+       Si tu veux VRAIMENT garder un accessor défensif (non recommandé), 
+       il faut caster explicitement :
+       
+           public function getEleveIdAttribute(): ?int
+           {
+               $value = $this->attributes['eleve_id'] ?? null;
+               return $value === null ? null : (int) $value;
+           }
+       
+       Mais la solution actuelle (sans accessor) est préférable.
+    ============================================================ */
 }

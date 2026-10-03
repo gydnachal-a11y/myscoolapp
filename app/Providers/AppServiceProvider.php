@@ -31,23 +31,32 @@ class AppServiceProvider extends ServiceProvider
     // CONFIGURATION
     // ============================================================
 
+    /** Durée de vie des compteurs (badges, messages, demandes). */
     private const COUNTERS_CACHE_TTL = 30;
 
+    /** Environnements où le mode strict Eloquent est activé. */
+    private const STRICT_ENVS = ['local', 'testing'];
+
+    /** Clés de cache (centralisées avec sprintf). */
     private const CACHE_KEY_ADMIN_MESSAGES   = 'admin_unread_messages';
     private const CACHE_KEY_ADMIN_DEMANDES   = 'admin_demandes_avance_en_attente';
     private const CACHE_KEY_USER_ANNONCES    = 'user_%d_annonces_non_lues';
     private const CACHE_KEY_CONTACT_MESSAGES = 'contact_%d_unread_messages';
 
-    /**
-     * Modèles dont la modification impacte la home.
-     * ⚠️ À ajuster selon ton HomeController.
-     */
+    /** Modèles dont la modification impacte la home. */
     private const HOME_OBSERVED_MODELS = [
         Eleve::class,
         User::class,
         Annonce::class,
         SiteSetting::class,
     ];
+
+    /** Rôles considérés comme admin pour les badges. */
+    private const ADMIN_ROLES = ['admin', 'super_admin'];
+
+    // ============================================================
+    // LIFECYCLE
+    // ============================================================
 
     public function register(): void
     {
@@ -71,32 +80,39 @@ class AppServiceProvider extends ServiceProvider
 
     private function configureDatabase(): void
     {
-        // Compat MySQL < 5.7.7 / vieux MariaDB : index limité à 191 chars
+        // Compat MySQL < 5.7.7 / vieux MariaDB
         Schema::defaultStringLength(191);
     }
 
     // ============================================================
-    // 2. MODÈLES (détection N+1, lazy loading, etc.)
+    // 2. MODÈLES ELOQUENT (mode strict)
     // ============================================================
 
+    /**
+     * ✅ Détecte les N+1 (preventLazyLoading)
+     * ✅ Détecte les typos dans $fillable (preventSilentlyDiscardingAttributes)
+     * ❌ NE PAS activer preventAccessingMissingAttributes : casse toutes les stats
+     *    utilisant `->with('rel')->select('col1', 'col2')` sans la FK.
+     *    → Utiliser `->withoutEagerLoads()` dans les stats.
+     */
     private function configureModels(): void
     {
-        // ✅ En local : strict sur tout (détecte les bugs silencieux)
-        //    En prod : on ne veut PAS planter pour un attribut manquant
-        if ($this->app->environment(['local', 'testing'])) {
-            Model::preventLazyLoading(true);
-            Model::preventSilentlyDiscardingAttributes(true);
-            Model::preventAccessingMissingAttributes(true);
+        if (! $this->app->environment(self::STRICT_ENVS)) {
+            return;
         }
+
+        Model::preventLazyLoading(true);
+        Model::preventSilentlyDiscardingAttributes(true);
+        Model::preventAccessingMissingAttributes(false);
     }
 
     // ============================================================
-    // 3. URL (HTTPS obligatoire en prod, Laravel Cloud)
+    // 3. URL
     // ============================================================
 
     private function configureUrl(): void
     {
-        if ($this->app->environment('production')) {
+        if ($this->app->isProduction()) {
             URL::forceScheme('https');
         }
     }
@@ -108,20 +124,21 @@ class AppServiceProvider extends ServiceProvider
     private function configureRateLimiting(): void
     {
         // Login : 5 tentatives / minute par email+IP
-        RateLimiter::for('login', function (Request $request): Limit {
+        RateLimiter::for('login', static function (Request $request): Limit {
             $key = mb_strtolower((string) $request->input('email')) . '|' . $request->ip();
+
             return Limit::perMinute(5)->by($key);
         });
 
         // API : 60 req/min par utilisateur authentifié (ou IP)
-        RateLimiter::for('api', function (Request $request): Limit {
+        RateLimiter::for('api', static function (Request $request): Limit {
             return Limit::perMinute(60)->by(
-                optional($request->user())->id ?: $request->ip()
+                $request->user()?->id ?: $request->ip()
             );
         });
 
         // Actions sensibles (reset password, contact…)
-        RateLimiter::for('sensitive', function (Request $request): Limit {
+        RateLimiter::for('sensitive', static function (Request $request): Limit {
             return Limit::perMinute(3)->by($request->ip());
         });
     }
@@ -132,9 +149,7 @@ class AppServiceProvider extends ServiceProvider
 
     private function configurePasswordRules(): void
     {
-        Password::defaults(function () {
-            // En prod : 12 caractères min, mixed case, chiffres, symboles, non compromis
-            // En local : règles allégées pour ne pas ralentir les tests
+        Password::defaults(function (): Password {
             return $this->app->isProduction()
                 ? Password::min(12)->mixedCase()->numbers()->symbols()->uncompromised()
                 : Password::min(8);
@@ -147,7 +162,6 @@ class AppServiceProvider extends ServiceProvider
 
     private function registerObservers(): void
     {
-        // ✅ Toute écriture sur ces modèles invalide le cache de la home
         foreach (self::HOME_OBSERVED_MODELS as $model) {
             $model::observe(HomeCacheObserver::class);
         }
@@ -159,23 +173,17 @@ class AppServiceProvider extends ServiceProvider
 
     private function registerViewComposers(): void
     {
-        // ------------------------------------------------------------
-        // Site settings partagés à TOUTES les vues
-        // ⚠️ Coût : 1 cache hit par requête (once() protège)
-        // ------------------------------------------------------------
+        // ─── Site settings (toutes les vues) ───
         View::composer('*', function ($view): void {
-            $view->with('siteSettings', once(fn () => $this->safeSiteSettings()));
+            $view->with('siteSettings', once(fn (): object => $this->safeSiteSettings()));
         });
 
-        // ------------------------------------------------------------
-        // Layout admin
-        // ------------------------------------------------------------
+        // ─── Layout admin ───
         View::composer('layouts.admin', function ($view): void {
             $user            = Auth::guard('web')->user();
             $isAuthenticated = $user instanceof User;
             $isAdmin         = $isAuthenticated && $this->isAdmin($user);
 
-            // Sur la page messages → on force le badge à 0
             $currentRoute   = request()->route()?->getName();
             $onMessagesPage = $currentRoute === 'admin.messages.index';
 
@@ -183,18 +191,18 @@ class AppServiceProvider extends ServiceProvider
                 'annoncesNonLues' => $isAuthenticated
                     ? $this->countAnnoncesNonLues($user)
                     : 0,
-                'unreadMessages'  => ($isAdmin && ! $onMessagesPage)
+
+                'unreadMessages' => ($isAdmin && ! $onMessagesPage)
                     ? $this->countAdminUnreadMessages()
                     : 0,
+
                 'demandesAvanceEnAttente' => $isAdmin
                     ? $this->countDemandesAvanceEnAttente()
                     : 0,
             ]);
         });
 
-        // ------------------------------------------------------------
-        // Layout contact
-        // ------------------------------------------------------------
+        // ─── Layout contact ───
         View::composer('layouts.contact', function ($view): void {
             $contact = Auth::guard('contact')->user();
 
@@ -207,7 +215,7 @@ class AppServiceProvider extends ServiceProvider
     }
 
     // ============================================================
-    // MÉTHODES PRIVÉES
+    // HELPERS PRIVÉS — SITE SETTINGS
     // ============================================================
 
     private function safeSiteSettings(): object
@@ -219,6 +227,14 @@ class AppServiceProvider extends ServiceProvider
         }
     }
 
+    // ============================================================
+    // HELPERS PRIVÉS — ADMIN
+    // ============================================================
+
+    /**
+     * Détecte si l'utilisateur est admin.
+     * Mis en cache runtime via `once()` → 1 seul appel par requête.
+     */
     private function isAdmin(User $user): bool
     {
         return once(function () use ($user): bool {
@@ -226,18 +242,22 @@ class AppServiceProvider extends ServiceProvider
                 return true;
             }
 
-            return $user->hasRole(['admin', 'super_admin']);
+            return $user->hasRole(self::ADMIN_ROLES);
         });
     }
+
+    // ============================================================
+    // HELPERS PRIVÉS — COMPTEURS (CACHE 30s)
+    // ============================================================
 
     private function countAnnoncesNonLues(User $user): int
     {
         return Cache::remember(
             sprintf(self::CACHE_KEY_USER_ANNONCES, $user->id),
             self::COUNTERS_CACHE_TTL,
-            fn (): int => Annonce::query()
+            static fn (): int => Annonce::query()
                 ->where('est_active', true)
-                ->whereDoesntHave('lecteurs', function ($query) use ($user): void {
+                ->whereDoesntHave('lecteurs', static function ($query) use ($user): void {
                     $query->where('user_id', $user->id)
                           ->whereNotNull('lu_a');
                 })
@@ -250,9 +270,9 @@ class AppServiceProvider extends ServiceProvider
         return Cache::remember(
             self::CACHE_KEY_ADMIN_MESSAGES,
             self::COUNTERS_CACHE_TTL,
-            fn (): int => ContactMessage::query()
+            static fn (): int => ContactMessage::query()
                 ->where('from_admin', false)
-                ->where(function ($q): void {
+                ->where(static function ($q): void {
                     $q->where('lu', false)->orWhereNull('lu');
                 })
                 ->count()
@@ -264,10 +284,10 @@ class AppServiceProvider extends ServiceProvider
         return Cache::remember(
             sprintf(self::CACHE_KEY_CONTACT_MESSAGES, $contact->id),
             self::COUNTERS_CACHE_TTL,
-            fn (): int => ContactMessage::query()
+            static fn (): int => ContactMessage::query()
                 ->where('contact_id', $contact->id)
                 ->where('from_admin', true)
-                ->where(function ($q): void {
+                ->where(static function ($q): void {
                     $q->where('lu', false)->orWhereNull('lu');
                 })
                 ->count()
@@ -279,7 +299,7 @@ class AppServiceProvider extends ServiceProvider
         return Cache::remember(
             self::CACHE_KEY_ADMIN_DEMANDES,
             self::COUNTERS_CACHE_TTL,
-            fn (): int => DemandeAvance::enAttente()->count()
+            static fn (): int => DemandeAvance::enAttente()->count()
         );
     }
 }

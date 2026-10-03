@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\Models\AvanceSalaire;
@@ -11,6 +13,8 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use RuntimeException;
+use Throwable;
 
 class AvanceService
 {
@@ -31,10 +35,13 @@ class AvanceService
     private const TAUX_CHANGE_DEFAUT = 2800.0;
 
     /** Statuts d'une avance encore active (non soldée). */
-    private const STATUTS_ACTIFS = ['en_attente', 'partiellement_remboursee'];
+    private const STATUTS_ACTIFS = [
+        AvanceSalaire::STATUT_EN_ATTENTE,
+        AvanceSalaire::STATUT_PARTIELLEMENT_REMBOURSEE,
+    ];
 
     /** Clés de cache. */
-    private const CACHE_KEY_TAUX   = 'taux_change_usd_cdf';
+    private const CACHE_KEY_TAUX   = 'taux_change';
     private const CACHE_KEY_DETTES = 'dettes_actives_user_';
 
     // ============================================================
@@ -43,15 +50,29 @@ class AvanceService
 
     /**
      * Récupère le salaire mensuel en USD (arrondi à l'entier).
+     *
+     * ✅ Gère les deux types :
+     *   - manuel       → salaire_mensuel_usd
+     *   - automatique  → salaire_ajuste_usd ?? salaire_auto_base_usd
      */
     public function getSalaireMensuelUsd(User $user): int
     {
         $salaire = match ($user->type_salaire) {
-            'manuel' => (float) ($user->salaire_mensuel_usd ?? 0),
-            default  => (float) ($user->salaire_ajuste_usd ?? $user->salaire_auto_base_usd ?? 0),
+            User::SALAIRE_MANUEL => (float) ($user->salaire_mensuel_usd ?? 0),
+            default              => (float) ($user->salaire_ajuste_usd
+                                            ?? $user->salaire_auto_base_usd
+                                            ?? 0),
         };
 
         return (int) round($salaire);
+    }
+
+    /**
+     * Vérifie si l'utilisateur a un salaire réellement fixé (> 0).
+     */
+    public function hasSalaireFixe(User $user): bool
+    {
+        return $this->getSalaireMensuelUsd($user) > 0;
     }
 
     /**
@@ -68,7 +89,7 @@ class AvanceService
 
     /**
      * Dette totale (somme des dettes restantes des avances non soldées).
-     * Résultat mis en cache 5 minutes pour éviter les requêtes répétées.
+     * Résultat mis en cache 5 minutes.
      */
     public function getDetteTotale(User $user): int
     {
@@ -102,10 +123,17 @@ class AvanceService
 
     /**
      * Vérifie si l'employé a atteint sa limite d'emprunt.
+     * Retourne false si l'utilisateur n'a pas de salaire fixé.
      */
     public function estBloque(User $user): bool
     {
-        return $this->getDetteTotale($user) >= $this->getLimiteEmprunt($user);
+        $limite = $this->getLimiteEmprunt($user);
+
+        if ($limite <= 0) {
+            return false;
+        }
+
+        return $this->getDetteTotale($user) >= $limite;
     }
 
     /**
@@ -115,41 +143,113 @@ class AvanceService
     {
         $montant = (int) round($montant);
 
+        if ($montant <= 0) {
+            return false;
+        }
+
+        if (! $this->hasSalaireFixe($user)) {
+            return false;
+        }
+
         return ($this->getDetteTotale($user) + $montant) <= $this->getLimiteEmprunt($user);
     }
 
     /**
      * Retourne la situation financière complète d'un utilisateur.
-     * Utile pour les vues : un seul appel renvoie toutes les données.
      *
-     * @return array{salaire: int, dette: int, limite: int, disponible: int, bloque: bool, taux_change: float}
+     * @return array{
+     *     salaire: int,
+     *     dette: int,
+     *     limite: int,
+     *     disponible: int,
+     *     bloque: bool,
+     *     taux_change: float,
+     *     eligible_avance: bool
+     * }
      */
     public function getSituationFinanciere(User $user): array
     {
-        $salaire   = $this->getSalaireMensuelUsd($user);
-        $dette     = $this->getDetteTotale($user);
-        $limite    = $this->getLimiteEmprunt($user);
-        $disponible = max(0, $limite - $dette);
+        $salaire  = $this->getSalaireMensuelUsd($user);
+        $dette    = $this->getDetteTotale($user);
+        $limite   = $this->getLimiteEmprunt($user);
+        $eligible = $salaire > 0;
 
         return [
-            'salaire'      => $salaire,
-            'dette'        => $dette,
-            'limite'       => $limite,
-            'disponible'   => $disponible,
-            'bloque'       => $dette >= $limite,
-            'taux_change'  => $this->getTauxChange(),
+            'salaire'         => $salaire,
+            'dette'           => $dette,
+            'limite'          => $limite,
+            'disponible'      => max(0, $limite - $dette),
+            'bloque'          => $eligible && $dette >= $limite,
+            'taux_change'     => $this->getTauxChangeSafe(),
+            'eligible_avance' => $eligible,
         ];
     }
 
     // ============================================================
-    // LECTURE — DONNÉES GROUPÉES (évite les N+1)
+    // LECTURE — LISTES D'UTILISATEURS
     // ============================================================
 
     /**
-     * Récupère les données utilisateur (salaire, dette, etc.) de manière optimisée.
+     * ✅ Retourne les utilisateurs ayant un salaire fixé (salaire > 0).
+     *
+     * Utilisé pour peupler le dropdown de création d'avance.
+     *
+     * @param  bool  $exclureBloques  Si true, exclut les users ayant atteint la limite
+     * @return Collection<int, User>
+     */
+    public function getUsersAvecSalaireFixe(bool $exclureBloques = false): Collection
+    {
+        $query = User::query()
+            ->whereNotNull('type_salaire')
+            ->where(function ($q) {
+                // Type manuel : salaire_mensuel_usd > 0
+                $q->where(function ($m) {
+                    $m->where('type_salaire', User::SALAIRE_MANUEL)
+                      ->whereNotNull('salaire_mensuel_usd')
+                      ->where('salaire_mensuel_usd', '>', 0);
+                })
+                // Type automatique : salaire_ajuste_usd OU salaire_auto_base_usd > 0
+                ->orWhere(function ($a) {
+                    $a->where('type_salaire', '!=', User::SALAIRE_MANUEL)
+                      ->where(function ($s) {
+                          $s->where(function ($x) {
+                              $x->whereNotNull('salaire_ajuste_usd')
+                                ->where('salaire_ajuste_usd', '>', 0);
+                          })
+                          ->orWhere(function ($x) {
+                              $x->whereNotNull('salaire_auto_base_usd')
+                                ->where('salaire_auto_base_usd', '>', 0);
+                          });
+                      });
+                });
+            })
+            ->orderBy('name');
+
+        /** @var Collection<int, User> $users */
+        $users = $query->get();
+
+        if ($exclureBloques) {
+            $users = $users->reject(fn (User $u) => $this->estBloque($u))->values();
+        }
+
+        return $users;
+    }
+
+    /**
+     * Retourne les données groupées pour une liste d'utilisateurs,
+     * en excluant ceux qui n'ont pas de salaire fixé.
      *
      * @param  Collection<int, User>  $users
-     * @return array<int, array<string, mixed>>
+     * @return array<int, array{
+     *     id: int,
+     *     name: string,
+     *     salaire: int,
+     *     dette: int,
+     *     limite: int,
+     *     reste_disponible: int,
+     *     bloque: bool,
+     *     eligible: bool
+     * }>
      */
     public function getUsersData(Collection $users): array
     {
@@ -163,21 +263,27 @@ class AvanceService
             ->groupBy('user_id')
             ->pluck('total_dette', 'user_id');
 
-        return $users->map(function (User $u) use ($dettesGroup) {
-            $salaire = $this->getSalaireMensuelUsd($u);
-            $dette   = (int) ($dettesGroup[$u->id] ?? 0);
-            $limite  = $this->getLimiteEmprunt($u);
+        return $users
+            ->map(function (User $u) use ($dettesGroup): array {
+                $salaire = $this->getSalaireMensuelUsd($u);
+                $dette   = (int) ($dettesGroup[$u->id] ?? 0);
+                $limite  = self::LIMITE_MULTIPLE * $salaire;
+                $eligible = $salaire > 0;
 
-            return [
-                'id'               => $u->id,
-                'name'             => $u->name,
-                'salaire'          => $salaire,
-                'dette'            => $dette,
-                'limite'           => $limite,
-                'reste_disponible' => max(0, $limite - $dette),
-                'bloque'           => $dette >= $limite,
-            ];
-        })->values()->toArray();
+                return [
+                    'id'               => $u->id,
+                    'name'             => $u->name,
+                    'salaire'          => $salaire,
+                    'dette'            => $dette,
+                    'limite'           => $limite,
+                    'reste_disponible' => max(0, $limite - $dette),
+                    'bloque'           => $eligible && $dette >= $limite,
+                    'eligible'         => $eligible,
+                ];
+            })
+            ->filter(fn (array $data) => $data['eligible'])
+            ->values()
+            ->toArray();
     }
 
     // ============================================================
@@ -187,20 +293,33 @@ class AvanceService
     /**
      * Crée une avance après vérification des règles métier.
      *
-     * @param  array{montant_avance_usd: float|int, mois_scolaire_id: int, date_avance: string, motif?: string|null, commentaire?: string|null}  $data
+     * @param  array{
+     *     montant_avance_usd: float|int|string,
+     *     mois_scolaire_id: int,
+     *     date_avance: string,
+     *     motif?: string|null,
+     *     commentaire?: string|null
+     * }  $data
      *
-     * @throws \DomainException  Si la limite d'emprunt est dépassée
+     * @throws RuntimeException  Si la limite d'emprunt est dépassée
      */
     public function creerAvance(User $user, array $data): AvanceSalaire
     {
-        $montantAvance = (int) round($data['montant_avance_usd']);
+        // ✅ FIX PHP 8.5 : cast (float) avant round()
+        $montantAvance = (int) round((float) $data['montant_avance_usd']);
 
         if ($montantAvance <= 0) {
-            throw new \DomainException('Le montant de l\'avance doit être supérieur à zéro.');
+            throw new RuntimeException('Le montant de l\'avance doit être supérieur à zéro.');
         }
 
-        if (!$this->peutEmprunter($user, $montantAvance)) {
-            throw new \DomainException(sprintf(
+        if (! $this->hasSalaireFixe($user)) {
+            throw new RuntimeException(
+                "Impossible de créer une avance : cet utilisateur n'a pas de salaire fixé."
+            );
+        }
+
+        if (! $this->peutEmprunter($user, $montantAvance)) {
+            throw new RuntimeException(sprintf(
                 "Limite d'emprunt dépassée. Dette actuelle : %d $, demande : %d $, limite : %d $.",
                 $this->getDetteTotale($user),
                 $montantAvance,
@@ -210,7 +329,7 @@ class AvanceService
 
         $taux = $this->getTauxChange();
 
-        $avance = DB::transaction(function () use ($user, $data, $montantAvance, $taux) {
+        $avance = DB::transaction(function () use ($user, $data, $montantAvance, $taux): AvanceSalaire {
             return AvanceSalaire::create([
                 'user_id'               => $user->id,
                 'mois_scolaire_id'      => $data['mois_scolaire_id'],
@@ -219,7 +338,7 @@ class AvanceService
                 'date_avance'           => $data['date_avance'],
                 'motif'                 => $data['motif'] ?? null,
                 'commentaire'           => $data['commentaire'] ?? null,
-                'statut'                => 'en_attente',
+                'statut'                => AvanceSalaire::STATUT_EN_ATTENTE,
                 'montant_rembourse_usd' => 0,
                 'montant_rembourse_fc'  => 0,
                 'dette_restante_usd'    => $montantAvance,
@@ -227,10 +346,8 @@ class AvanceService
             ]);
         });
 
-        // Invalider le cache de dette de cet utilisateur
         $this->invaliderCacheDette($user);
 
-        // Log hors transaction
         Log::info('Avance créée', [
             'avance_id'   => $avance->id,
             'user_id'     => $user->id,
@@ -248,11 +365,10 @@ class AvanceService
     /**
      * Rembourse les avances en attente selon le principe FIFO.
      *
-     * @param  User    $user
-     * @param  float   $montant              Montant à rembourser (en USD)
-     * @param  int|null $paiementSalaireId
-     * @param  float   $tauxChange           Taux de change du jour du paiement
-     * @return array<int, array<string, mixed>>  Détail des remboursements effectués
+     * @param  float     $montant            Montant à rembourser (USD)
+     * @param  int|null  $paiementSalaireId
+     * @param  float     $tauxChange         Taux de change du jour
+     * @return array<int, array<string, mixed>>  Détail des remboursements
      */
     public function rembourserDettes(
         User $user,
@@ -282,23 +398,27 @@ class AvanceService
             $tauxChange,
             $paiementSalaireId,
             &$remboursements
-        ) {
+        ): void {
             foreach ($avances as $avance) {
                 if ($montantRestant <= 0) {
                     break;
                 }
 
                 $detteRestante = (int) $avance->dette_restante_usd;
+
                 if ($detteRestante <= 0) {
                     continue;
                 }
 
-                $rembourseIci     = min($montantRestant, $detteRestante);
-                $montantRestant  -= $rembourseIci;
+                $rembourseIci    = min($montantRestant, $detteRestante);
+                $montantRestant -= $rembourseIci;
 
                 $nouveauRembourse = (int) $avance->montant_rembourse_usd + $rembourseIci;
                 $nouvelleDette    = max(0, $detteRestante - $rembourseIci);
-                $statut           = $nouvelleDette === 0 ? 'remboursee' : 'partiellement_remboursee';
+
+                $statut = $nouvelleDette === 0
+                    ? AvanceSalaire::STATUT_REMBOURSEE
+                    : AvanceSalaire::STATUT_PARTIELLEMENT_REMBOURSEE;
 
                 $avance->update([
                     'montant_rembourse_usd' => $nouveauRembourse,
@@ -327,16 +447,14 @@ class AvanceService
             }
         });
 
-        // Invalider le cache de dette
         $this->invaliderCacheDette($user);
 
-        // Log hors transaction
-        if (!empty($remboursements)) {
+        if (! empty($remboursements)) {
             Log::info('Remboursements effectués', [
-                'user_id'         => $user->id,
-                'montant_total'   => $montant,
+                'user_id'           => $user->id,
+                'montant_total'     => $montant,
                 'nb_remboursements' => count($remboursements),
-                'paiement_id'     => $paiementSalaireId,
+                'paiement_id'       => $paiementSalaireId,
             ]);
         }
 
@@ -356,10 +474,11 @@ class AvanceService
 
         $userIds = [];
 
-        DB::transaction(function () use ($remboursements, $paiement, &$userIds) {
+        DB::transaction(function () use ($remboursements, $paiement, &$userIds): void {
             foreach ($remboursements as $remboursement) {
                 $avance = $remboursement->avance;
-                if (!$avance) {
+
+                if (! $avance) {
                     continue;
                 }
 
@@ -370,7 +489,9 @@ class AvanceService
 
                 $taux = (float) ($remboursement->taux_change ?: $this->getTauxChange());
 
-                $statut = $nouvelleDette > 0 ? 'en_attente' : 'remboursee';
+                $statut = $nouvelleDette > 0
+                    ? AvanceSalaire::STATUT_EN_ATTENTE
+                    : AvanceSalaire::STATUT_REMBOURSEE;
 
                 $avance->update([
                     'montant_rembourse_usd' => $nouveauRembourse,
@@ -384,13 +505,10 @@ class AvanceService
             $paiement->remboursementsAvances()->delete();
         });
 
-        // Invalider le cache pour chaque utilisateur affecté
-        foreach (array_unique($userIds) as $userId) {
-            Cache::forget(self::CACHE_KEY_DETTES . $userId);
-        }
+        $this->invaliderCacheDettes(array_unique($userIds));
 
         Log::info('Remboursements annulés', [
-            'paiement_id'      => $paiement->id,
+            'paiement_id'       => $paiement->id,
             'nb_remboursements' => $remboursements->count(),
         ]);
     }
@@ -402,35 +520,47 @@ class AvanceService
     /**
      * Récupère le taux de change USD → CDF (avec cache 1h).
      *
-     * @throws \RuntimeException  Si le taux n'est pas configuré
+     * @throws RuntimeException  Si le taux n'est pas configuré
      */
     public function getTauxChange(): float
     {
-        return Cache::remember(self::CACHE_KEY_TAUX, self::TAUX_CACHE_TTL, function () {
-            $source = Devise::where('code', 'USD')->first();
-            $cible  = Devise::where('code', 'CDF')->first();
+        $cached = Cache::get(self::CACHE_KEY_TAUX);
 
-            if (!$source || !$cible) {
-                throw new \RuntimeException(
-                    'Taux de change USD/CDF non configuré dans la base de données.'
-                );
-            }
+        if (is_numeric($cached) && (float) $cached > 0) {
+            return (float) $cached;
+        }
 
-            return (float) $source->tauxVers($cible);
-        });
+        $source = Devise::where('code', 'USD')->first();
+        $cible  = Devise::where('code', 'CDF')->first();
+
+        if (! $source || ! $cible) {
+            throw new RuntimeException(
+                'Taux de change USD/CDF non configuré dans la base de données.'
+            );
+        }
+
+        $taux = (float) $source->tauxVers($cible);
+
+        if ($taux <= 0) {
+            throw new RuntimeException('Taux de change USD/CDF invalide.');
+        }
+
+        Cache::put(self::CACHE_KEY_TAUX, $taux, self::TAUX_CACHE_TTL);
+
+        return $taux;
     }
 
     /**
-     * Version "safe" de getTauxChange() : retourne un taux par défaut
-     * au lieu de lancer une exception si non configuré.
+     * Version "safe" : retourne un taux par défaut au lieu de lancer une exception.
      */
     public function getTauxChangeSafe(): float
     {
         try {
             return $this->getTauxChange();
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             Log::warning('Taux de change non configuré, utilisation du fallback', [
                 'fallback' => self::TAUX_CHANGE_DEFAUT,
+                'error'    => $e->getMessage(),
             ]);
 
             return self::TAUX_CHANGE_DEFAUT;
@@ -438,7 +568,7 @@ class AvanceService
     }
 
     /**
-     * Force le rechargement du taux de change (utile après modification par l'admin).
+     * Force le rechargement du taux (après modification par l'admin).
      */
     public function refreshTauxChange(): float
     {

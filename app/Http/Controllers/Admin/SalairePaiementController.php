@@ -56,8 +56,12 @@ class SalairePaiementController extends Controller
             ->paginate(20)
             ->withQueryString();
 
-        // Statistiques en 1 seule requête SQL
+        // ✅ FIX : `withoutEagerLoads()` retire les relations (`user`, `moisScolaire`)
+        //          héritées de `getFilteredQuery()`. Sans cela, Laravel tente de
+        //          résoudre `with('user')` sur un résultat agrégé qui ne contient
+        //          PAS `user_id` → MissingAttributeException.
         $statsRaw = (clone $filteredQuery)
+            ->withoutEagerLoads()
             ->reorder()
             ->selectRaw('
                 COALESCE(SUM(montant_paye_usd), 0) AS total_usd,
@@ -386,11 +390,17 @@ class SalairePaiementController extends Controller
     /**
      * Statistiques par mois.
      *
+     * ✅ FIX : `withoutEagerLoads()` retire les relations héritées (`user`,
+     *          `moisScolaire`) AVANT le selectRaw agrégé. On réintroduit
+     *          explicitement `with('moisScolaire:...')` ensuite — c'est sûr
+     *          cette fois car `mois_scolaire_id` est bien dans le selectRaw.
+     *
      * @return array<int, array<string, mixed>>
      */
     private function getStatsParMois(Builder $baseQuery): array
     {
         return (clone $baseQuery)
+            ->withoutEagerLoads()          // ✅ FIX : retire user + moisScolaire hérités
             ->reorder()
             ->selectRaw('
                 mois_scolaire_id,
@@ -400,7 +410,7 @@ class SalairePaiementController extends Controller
                 AVG(montant_paye_usd) AS moyenne_usd
             ')
             ->groupBy('mois_scolaire_id')
-            ->with('moisScolaire:id,mois,nom_mois')
+            ->with('moisScolaire:id,mois,nom_mois')   // ✅ réintroduit : mois_scolaire_id est bien dans le SELECT
             ->get()
             ->map(function ($item) {
                 $mois = $item->moisScolaire;

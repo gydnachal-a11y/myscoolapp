@@ -24,6 +24,10 @@ use Throwable;
 
 class PaiementController extends Controller
 {
+    // ============================================================
+    // CONSTANTES
+    // ============================================================
+
     private const PER_PAGE           = 15;
     private const PER_PAGE_MIN       = 5;
     private const PER_PAGE_MAX       = 100;
@@ -31,11 +35,13 @@ class PaiementController extends Controller
     private const MODE_TRANCHE       = Paiement::MODE_TRANCHE;
     private const PAIEMENT_FERME_MSG = 'La session de paiement est fermée pour cette année scolaire.';
 
-    private PaiementService $paiementService;
+    // ============================================================
+    // CONSTRUCTEUR
+    // ============================================================
 
-    public function __construct(PaiementService $paiementService)
-    {
-        $this->paiementService = $paiementService;
+    public function __construct(
+        private readonly PaiementService $paiementService
+    ) {
     }
 
     // ============================================================
@@ -44,19 +50,13 @@ class PaiementController extends Controller
 
     public function index(Request $request): View|RedirectResponse
     {
-        $anneeActive = $this->getAnneeActiveOrRedirect();
-        if ($anneeActive instanceof RedirectResponse) return $anneeActive;
+        $anneeActive = $this->resolveAnneeActive();
+        if ($anneeActive instanceof RedirectResponse) {
+            return $anneeActive;
+        }
 
-        $validated = $request->validate([
-            'mode_paiement' => ['nullable', 'in:' . self::MODE_MENSUEL . ',' . self::MODE_TRANCHE],
-            'periode'       => ['nullable', 'integer', 'min:1'],
-            'salle'         => ['nullable', 'integer', 'exists:salles_de_classe,id'],
-            'statut'        => ['nullable', 'in:' . implode(',', Paiement::STATUTS)],
-            'recherche'     => ['nullable', 'string', 'max:100'],
-            'per_page'      => ['nullable', 'integer', 'min:' . self::PER_PAGE_MIN, 'max:' . self::PER_PAGE_MAX],
-        ]);
-
-        $perPage = (int) ($validated['per_page'] ?? self::PER_PAGE);
+        $validated = $request->validate($this->indexValidationRules());
+        $perPage   = (int) ($validated['per_page'] ?? self::PER_PAGE);
 
         $filteredQuery = $this->getFilteredQuery($request, $anneeActive);
 
@@ -66,14 +66,16 @@ class PaiementController extends Controller
             ->paginate($perPage)
             ->withQueryString();
 
-        $statsGlobales = $this->getStatsGlobales($filteredQuery);
-        $statsMois     = $this->getStatsParPeriode($filteredQuery);
+        [$statsGlobales, $statsMois] = $this->getStats($filteredQuery);
 
         $salleId       = $validated['salle'] ?? null;
         $statsParSalle = $this->paiementService->getStatistiquesParSalle($anneeActive, $salleId);
 
         $salles = SalleDeClasse::query()
-            ->when(!empty($validated['mode_paiement']), fn (Builder $q) => $q->where('mode_paiement', $validated['mode_paiement']))
+            ->when(
+                !empty($validated['mode_paiement']),
+                fn (Builder $q) => $q->where('mode_paiement', $validated['mode_paiement'])
+            )
             ->orderBy('nom')
             ->get(['id', 'nom', 'mode_paiement']);
 
@@ -90,7 +92,16 @@ class PaiementController extends Controller
         $tauxChange = $this->paiementService->getTauxChangeSafe();
 
         return view('admin.paiements.index', array_merge(
-            compact('paiements', 'salles', 'anneeActive', 'mois', 'tranches', 'tauxChange', 'statsMois', 'statsParSalle'),
+            compact(
+                'paiements',
+                'salles',
+                'anneeActive',
+                'mois',
+                'tranches',
+                'tauxChange',
+                'statsMois',
+                'statsParSalle'
+            ),
             $statsGlobales
         ));
     }
@@ -101,10 +112,14 @@ class PaiementController extends Controller
 
     public function show(Paiement $paiement): View|RedirectResponse
     {
-        $anneeActive = $this->getAnneeActiveOrRedirect();
-        if ($anneeActive instanceof RedirectResponse) return $anneeActive;
+        $anneeActive = $this->resolveAnneeActive();
+        if ($anneeActive instanceof RedirectResponse) {
+            return $anneeActive;
+        }
 
-        if ($redirect = $this->verifierAppartientAnneeActive($paiement, $anneeActive)) return $redirect;
+        if ($redirect = $this->verifierAppartientAnneeActive($paiement, $anneeActive)) {
+            return $redirect;
+        }
 
         $paiement->load(['eleve', 'salleClasse', 'anneeScolaire', 'sessionPaiement']);
 
@@ -120,12 +135,12 @@ class PaiementController extends Controller
 
     public function create(Request $request): View|RedirectResponse
     {
-        return $this->renderFormView('admin.paiements.create', $request);
+        return $this->renderFormView('admin.paiements.create');
     }
 
     public function createMultiple(Request $request): View|RedirectResponse
     {
-        return $this->renderFormView('admin.paiements.create-multiple', $request);
+        return $this->renderFormView('admin.paiements.create-multiple');
     }
 
     // ============================================================
@@ -134,8 +149,10 @@ class PaiementController extends Controller
 
     public function store(StorePaiementRequest $request): RedirectResponse
     {
-        $anneeActive = $this->getAnneeActiveOrRedirect();
-        if ($anneeActive instanceof RedirectResponse) return $anneeActive;
+        $anneeActive = $this->resolveAnneeActive();
+        if ($anneeActive instanceof RedirectResponse) {
+            return $anneeActive;
+        }
 
         if (!$this->verifierPaiementOuvert($anneeActive)) {
             return back()->withInput()->with('error', self::PAIEMENT_FERME_MSG);
@@ -159,7 +176,9 @@ class PaiementController extends Controller
                 'user_id'   => $request->user()?->id,
             ]);
 
-            return back()->with('error', "Une erreur est survenue lors de l'enregistrement. Veuillez réessayer.")->withInput();
+            return back()
+                ->with('error', "Une erreur est survenue lors de l'enregistrement. Veuillez réessayer.")
+                ->withInput();
         }
     }
 
@@ -169,10 +188,14 @@ class PaiementController extends Controller
 
     public function edit(Paiement $paiement): View|RedirectResponse
     {
-        $anneeActive = $this->getAnneeActiveOrRedirect();
-        if ($anneeActive instanceof RedirectResponse) return $anneeActive;
+        $anneeActive = $this->resolveAnneeActive();
+        if ($anneeActive instanceof RedirectResponse) {
+            return $anneeActive;
+        }
 
-        if ($redirect = $this->verifierAppartientAnneeActive($paiement, $anneeActive, 'modifier')) return $redirect;
+        if ($redirect = $this->verifierAppartientAnneeActive($paiement, $anneeActive, 'modifier')) {
+            return $redirect;
+        }
 
         $data = $this->buildFormData($anneeActive);
         $data['paiement'] = $paiement->load(['eleve', 'salleClasse', 'anneeScolaire', 'sessionPaiement']);
@@ -182,10 +205,14 @@ class PaiementController extends Controller
 
     public function update(UpdatePaiementRequest $request, Paiement $paiement): RedirectResponse
     {
-        $anneeActive = $this->getAnneeActiveOrRedirect();
-        if ($anneeActive instanceof RedirectResponse) return $anneeActive;
+        $anneeActive = $this->resolveAnneeActive();
+        if ($anneeActive instanceof RedirectResponse) {
+            return $anneeActive;
+        }
 
-        if ($redirect = $this->verifierAppartientAnneeActive($paiement, $anneeActive, 'modifier')) return $redirect;
+        if ($redirect = $this->verifierAppartientAnneeActive($paiement, $anneeActive, 'modifier')) {
+            return $redirect;
+        }
 
         if (!$this->verifierPaiementOuvert($anneeActive)) {
             return back()->withInput()->with('error', self::PAIEMENT_FERME_MSG);
@@ -202,7 +229,9 @@ class PaiementController extends Controller
                 'champs_modifies' => array_keys($data),
             ]);
 
-            return redirect()->route('admin.paiements.index')->with('success', 'Paiement mis à jour avec succès.');
+            return redirect()
+                ->route('admin.paiements.index')
+                ->with('success', 'Paiement mis à jour avec succès.');
 
         } catch (ValidationException $e) {
             return back()->withErrors($e->errors())->withInput();
@@ -214,7 +243,9 @@ class PaiementController extends Controller
                 'user_id'   => $request->user()?->id,
             ]);
 
-            return back()->with('error', 'Une erreur est survenue lors de la mise à jour. Veuillez réessayer.')->withInput();
+            return back()
+                ->with('error', 'Une erreur est survenue lors de la mise à jour. Veuillez réessayer.')
+                ->withInput();
         }
     }
 
@@ -224,10 +255,14 @@ class PaiementController extends Controller
 
     public function destroy(Paiement $paiement): RedirectResponse
     {
-        $anneeActive = $this->getAnneeActiveOrRedirect();
-        if ($anneeActive instanceof RedirectResponse) return $anneeActive;
+        $anneeActive = $this->resolveAnneeActive();
+        if ($anneeActive instanceof RedirectResponse) {
+            return $anneeActive;
+        }
 
-        if ($redirect = $this->verifierAppartientAnneeActive($paiement, $anneeActive, 'supprimer')) return $redirect;
+        if ($redirect = $this->verifierAppartientAnneeActive($paiement, $anneeActive, 'supprimer')) {
+            return $redirect;
+        }
 
         $eleveNom    = $paiement->eleve?->nom ?? 'Élève supprimé';
         $elevePrenom = $paiement->eleve?->prenom ?? '';
@@ -243,12 +278,14 @@ class PaiementController extends Controller
                 'periode'     => $periode,
             ]);
 
-            return redirect()->route('admin.paiements.index')->with('success', sprintf(
-                'Paiement de %s %s (%s) supprimé avec succès.',
-                $eleveNom,
-                $elevePrenom,
-                $periode
-            ));
+            return redirect()
+                ->route('admin.paiements.index')
+                ->with('success', sprintf(
+                    'Paiement de %s %s (%s) supprimé avec succès.',
+                    $eleveNom,
+                    $elevePrenom,
+                    $periode
+                ));
 
         } catch (ValidationException $e) {
             return back()->withErrors($e->errors());
@@ -267,10 +304,28 @@ class PaiementController extends Controller
     // MÉTHODES PRIVÉES — CONSTRUCTION DES DONNÉES
     // ============================================================
 
+    /**
+     * Prépare toutes les données nécessaires aux vues create/edit.
+     */
     private function buildFormData(AnneeScolaire $anneeActive): array
     {
-        /* Salles avec section + session (via section) */
-        $sallesData = SalleDeClasse::query()
+        return [
+            'sallesData'     => $this->buildSallesData(),
+            'sections'       => $this->buildSectionsData(),
+            'elevesParSalle' => $this->paiementService->getElevesParSalle($anneeActive),
+            'mois'           => $this->buildMoisData($anneeActive),
+            'tranches'       => $this->buildTranchesData($anneeActive),
+            'tauxChange'     => (float) $this->paiementService->getTauxChangeSafe(),
+            'anneeActive'    => $anneeActive,
+        ];
+    }
+
+    /**
+     * Salles avec section + session (via section).
+     */
+    private function buildSallesData(): array
+    {
+        return SalleDeClasse::query()
             ->with(['section:id,nom,session_id', 'section.session:id,nom'])
             ->orderBy('nom')
             ->get()
@@ -286,41 +341,58 @@ class PaiementController extends Controller
             ])
             ->values()
             ->all();
+    }
 
-        $sections = Section::query()
+    /**
+     * Liste simplifiée des sections.
+     */
+    private function buildSectionsData(): array
+    {
+        return Section::query()
             ->orderBy('nom')
             ->get(['id', 'nom'])
             ->map(fn (Section $s): array => ['id' => $s->id, 'nom' => $s->nom])
             ->values()
             ->all();
+    }
 
-        $elevesParSalle = $this->paiementService->getElevesParSalle($anneeActive);
-
-        $mois = MoisScolaire::query()
+    /**
+     * Mois scolaires au format { value, label } pour les <select>.
+     */
+    private function buildMoisData(AnneeScolaire $anneeActive): array
+    {
+        return MoisScolaire::query()
             ->where('annee_scolaire_id', $anneeActive->id)
             ->orderBy('mois')
             ->get(['id', 'nom_mois'])
             ->map(fn (MoisScolaire $m): array => ['value' => $m->id, 'label' => $m->nom_mois])
             ->values()
             ->all();
+    }
 
-        $tranches = TrancheScolaire::query()
+    /**
+     * Tranches scolaires au format { value, label } pour les <select>.
+     */
+    private function buildTranchesData(AnneeScolaire $anneeActive): array
+    {
+        return TrancheScolaire::query()
             ->where('annee_scolaire_id', $anneeActive->id)
             ->orderBy('tranche')
             ->get(['id', 'tranche'])
             ->map(fn (TrancheScolaire $t): array => ['value' => $t->id, 'label' => "Tranche {$t->tranche}"])
             ->values()
             ->all();
-
-        $tauxChange = (float) $this->paiementService->getTauxChangeSafe();
-
-        return compact('sallesData', 'sections', 'elevesParSalle', 'mois', 'tranches', 'tauxChange', 'anneeActive');
     }
 
-    private function renderFormView(string $view, Request $request): View|RedirectResponse
+    /**
+     * Vue de formulaire générique (create / create-multiple).
+     */
+    private function renderFormView(string $view): View|RedirectResponse
     {
-        $anneeActive = $this->getAnneeActiveOrRedirect();
-        if ($anneeActive instanceof RedirectResponse) return $anneeActive;
+        $anneeActive = $this->resolveAnneeActive();
+        if ($anneeActive instanceof RedirectResponse) {
+            return $anneeActive;
+        }
 
         return view($view, $this->buildFormData($anneeActive));
     }
@@ -329,19 +401,61 @@ class PaiementController extends Controller
     // MÉTHODES PRIVÉES — VÉRIFICATIONS
     // ============================================================
 
+    /**
+     * Récupère l'année scolaire active ou renvoie une redirection.
+     * Remplace l'appel répété à `getAnneeActiveOrRedirect()`.
+     */
+    private function resolveAnneeActive(): AnneeScolaire|RedirectResponse
+    {
+        $anneeActive = $this->paiementService->getAnneeActive();
+
+        if (!$anneeActive) {
+            return redirect()
+                ->route('admin.annees-scolaires.index')
+                ->with('error', 'Aucune année scolaire active. Veuillez en définir une.');
+        }
+
+        return $anneeActive;
+    }
+
+    /**
+     * Règles de validation de l'index.
+     */
+    private function indexValidationRules(): array
+    {
+        return [
+            'mode_paiement' => ['nullable', 'in:' . self::MODE_MENSUEL . ',' . self::MODE_TRANCHE],
+            'periode'       => ['nullable', 'integer', 'min:1'],
+            'salle'         => ['nullable', 'integer', 'exists:salles_de_classe,id'],
+            'statut'        => ['nullable', 'in:' . implode(',', Paiement::STATUTS)],
+            'recherche'     => ['nullable', 'string', 'max:100'],
+            'per_page'      => ['nullable', 'integer', 'min:' . self::PER_PAGE_MIN, 'max:' . self::PER_PAGE_MAX],
+        ];
+    }
+
+    /**
+     * Vérifie que le paiement appartient bien à l'année scolaire active.
+     */
     private function verifierAppartientAnneeActive(
         Paiement $paiement,
         AnneeScolaire $anneeActive,
         string $action = 'consulter'
     ): ?RedirectResponse {
-        if ((int) $paiement->annee_scolaire_id === (int) $anneeActive->id) return null;
+        if ((int) $paiement->annee_scolaire_id === (int) $anneeActive->id) {
+            return null;
+        }
 
-        return redirect()->route('admin.paiements.index')->with('error', sprintf(
-            "Impossible de %s un paiement d'une autre année scolaire.",
-            $action
-        ));
+        return redirect()
+            ->route('admin.paiements.index')
+            ->with('error', sprintf(
+                "Impossible de %s un paiement d'une autre année scolaire.",
+                $action
+            ));
     }
 
+    /**
+     * Indique si les paiements sont ouverts pour l'année donnée.
+     */
     private function verifierPaiementOuvert(AnneeScolaire $anneeActive): bool
     {
         return (bool) ($anneeActive->paiement_ouvert ?? false);
@@ -361,7 +475,8 @@ class PaiementController extends Controller
             'user_id'  => $request->user()?->id,
         ]);
 
-        return redirect()->route('admin.paiements.index')
+        return redirect()
+            ->route('admin.paiements.index')
             ->with('success', count($paiementsCrees) . ' paiement(s) enregistré(s) avec succès.');
     }
 
@@ -379,7 +494,9 @@ class PaiementController extends Controller
             $data['type_periode'] ?? self::MODE_MENSUEL,
             $data['periode'] ?? null
         )) {
-            return back()->with('error', 'Un paiement existe déjà pour cet élève sur cette période.')->withInput();
+            return back()
+                ->with('error', 'Un paiement existe déjà pour cet élève sur cette période.')
+                ->withInput();
         }
 
         $paiement = $this->paiementService->creerPaiement($data, $anneeActive);
@@ -391,36 +508,39 @@ class PaiementController extends Controller
             'user_id'             => $request->user()?->id,
         ]);
 
-        return redirect()->route('admin.paiements.index')->with('success', 'Paiement enregistré avec succès.');
+        return redirect()
+            ->route('admin.paiements.index')
+            ->with('success', 'Paiement enregistré avec succès.');
     }
 
     // ============================================================
     // MÉTHODES PRIVÉES — REQUÊTES
     // ============================================================
 
-    private function getAnneeActiveOrRedirect(): AnneeScolaire|RedirectResponse
-    {
-        $anneeActive = $this->paiementService->getAnneeActive();
-
-        if (!$anneeActive) {
-            return redirect()->route('admin.annees-scolaires.index')
-                ->with('error', 'Aucune année scolaire active. Veuillez en définir une.');
-        }
-
-        return $anneeActive;
-    }
-
+    /**
+     * Construit la requête filtrée à partir des paramètres de la requête HTTP.
+     */
     private function getFilteredQuery(Request $request, AnneeScolaire $anneeActive): Builder
     {
         $query = Paiement::query()
             ->with(['eleve', 'salleClasse', 'anneeScolaire', 'sessionPaiement'])
             ->where('annee_scolaire_id', $anneeActive->id);
 
-        if ($request->filled('mode_paiement')) $query->where('type_periode', $request->input('mode_paiement'));
-        if ($request->filled('periode'))       $query->where('periode', $request->input('periode'));
-        if ($request->filled('salle'))         $query->where('salle_classe_id', $request->input('salle'));
-        if ($request->filled('statut'))        $query->where('statut', $request->input('statut'));
-        if ($request->filled('recherche'))     $query->recherche($request->input('recherche'));
+        if ($request->filled('mode_paiement')) {
+            $query->where('type_periode', $request->input('mode_paiement'));
+        }
+        if ($request->filled('periode')) {
+            $query->where('periode', $request->input('periode'));
+        }
+        if ($request->filled('salle')) {
+            $query->where('salle_classe_id', $request->input('salle'));
+        }
+        if ($request->filled('statut')) {
+            $query->where('statut', $request->input('statut'));
+        }
+        if ($request->filled('recherche')) {
+            $query->recherche($request->input('recherche'));
+        }
 
         return $query;
     }
@@ -429,9 +549,35 @@ class PaiementController extends Controller
     // MÉTHODES PRIVÉES — STATISTIQUES
     // ============================================================
 
+    /**
+     * Retourne les deux jeux de stats en un appel.
+     *
+     * @return array{0: array<string, float|int>, 1: array<int, array<string, mixed>>}
+     */
+    private function getStats(Builder $filteredQuery): array
+    {
+        return [
+            $this->getStatsGlobales($filteredQuery),
+            $this->getStatsParPeriode($filteredQuery),
+        ];
+    }
+
+    /**
+     * Statistiques globales (agrégats) sur la requête filtrée.
+     *
+     * ✅ FIX : `withoutEagerLoads()` retire les relations (`eleve`, `salleClasse`,
+     * `anneeScolaire`, `sessionPaiement`) héritées de `getFilteredQuery()`.
+     * Sans cela, Laravel tente de résoudre ces relations sur un résultat
+     * agrégé → MissingAttributeException : eleve_id / salle_classe_id.
+     *
+     * ✅ FIX : `reorder()` supprime les ORDER BY résiduels qui casseraient
+     * une requête avec SELECT d'agrégats.
+     */
     private function getStatsGlobales(Builder $filteredQuery): array
     {
         $raw = (clone $filteredQuery)
+            ->withoutEagerLoads()
+            ->reorder()
             ->selectRaw('
                 COALESCE(SUM(montant_paye_usd), 0)              AS total_paye_usd,
                 COALESCE(SUM(montant_paye_fc), 0)               AS total_paye_fc,
@@ -439,7 +585,12 @@ class PaiementController extends Controller
                 SUM(CASE WHEN statut = ? THEN 1 ELSE 0 END)     AS nb_partiel,
                 SUM(CASE WHEN statut = ? THEN 1 ELSE 0 END)     AS nb_impaye,
                 SUM(CASE WHEN statut = ? THEN 1 ELSE 0 END)     AS nb_surpaye
-            ', [Paiement::STATUT_PAYE, Paiement::STATUT_PARTIEL, Paiement::STATUT_IMPAYE, Paiement::STATUT_SURPAYE])
+            ', [
+                Paiement::STATUT_PAYE,
+                Paiement::STATUT_PARTIEL,
+                Paiement::STATUT_IMPAYE,
+                Paiement::STATUT_SURPAYE,
+            ])
             ->first();
 
         return [
@@ -452,9 +603,18 @@ class PaiementController extends Controller
         ];
     }
 
+    /**
+     * Statistiques par période (group by période).
+     *
+     * ✅ MÊMES FIX que getStatsGlobales :
+     *   - withoutEagerLoads() → évite la MissingAttributeException
+     *   - reorder()           → nettoie les ORDER BY pour le GROUP BY
+     */
     private function getStatsParPeriode(Builder $filteredQuery): array
     {
         return (clone $filteredQuery)
+            ->withoutEagerLoads()
+            ->reorder()
             ->selectRaw('
                 periode,
                 SUM(montant_paye_usd) AS total_usd,
@@ -464,7 +624,7 @@ class PaiementController extends Controller
             ')
             ->groupBy('periode')
             ->get()
-            ->map(fn ($item) => [
+            ->map(fn ($item): array => [
                 'nom'         => $item->periode ?? 'Sans période',
                 'total_usd'   => (int) ($item->total_usd ?? 0),
                 'total_fc'    => (int) ($item->total_fc  ?? 0),

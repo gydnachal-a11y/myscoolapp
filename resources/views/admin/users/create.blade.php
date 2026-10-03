@@ -8,13 +8,13 @@
 
     {{-- Messages flash --}}
     @if(session('success'))
-        <div class="flash flash-success">
+        <div class="flash flash-success" role="status">
             <i class="bi bi-check-circle-fill" aria-hidden="true"></i>
             <span>{{ session('success') }}</span>
         </div>
     @endif
     @if(session('error'))
-        <div class="flash flash-error">
+        <div class="flash flash-error" role="alert">
             <i class="bi bi-exclamation-circle-fill" aria-hidden="true"></i>
             <span>{{ session('error') }}</span>
         </div>
@@ -135,14 +135,14 @@
             </div>
             <div class="flex justify-between items-center mt-4 step-actions">
                 <a href="{{ route('admin.users.index') }}" class="btn-cancel">Annuler</a>
-                <button type="button" class="btn-next" @click="step = 2">
+                <button type="button" class="btn-next" @click="goToStep(2)">
                     Suivant <i class="bi bi-arrow-right" aria-hidden="true"></i>
                 </button>
             </div>
         </div>
 
         {{-- ═══════════════════════════════════════════════════
-             ÉTAPE 2 — COMPTE
+             ÉTAPE 2 — COMPTE (avec nouvelles fonctionnalités)
              ═══════════════════════════════════════════════════ --}}
         <div x-show="step === 2" x-transition:enter.duration.300ms>
             <div class="form-section">
@@ -190,8 +190,9 @@
                     </div>
 
                     <div class="form-row">
+                        {{-- ✅ CHAMP MOT DE PASSE avec force + œil --}}
                         <div class="form-field">
-                            <div class="input-wrap">
+                            <div class="input-wrap password-wrap">
                                 <input type="password" name="password" id="password"
                                        placeholder=" " required minlength="6"
                                        autocomplete="new-password"
@@ -200,13 +201,43 @@
                                     Mot de passe <span class="text-red-500">*</span>
                                 </label>
                                 <i class="bi bi-lock icon" aria-hidden="true"></i>
+                                <button type="button"
+                                        class="toggle-password"
+                                        data-target="password"
+                                        aria-label="Afficher le mot de passe"
+                                        aria-pressed="false"
+                                        tabindex="-1">
+                                    <i class="bi bi-eye" aria-hidden="true"></i>
+                                </button>
                                 <div class="line-focus"></div>
                             </div>
+
+                            {{-- ✅ Indicateur de force --}}
+                            <div class="password-strength" id="passwordStrength" aria-live="polite" hidden>
+                                <div class="strength-bars">
+                                    <span class="strength-bar" data-level="1"></span>
+                                    <span class="strength-bar" data-level="2"></span>
+                                    <span class="strength-bar" data-level="3"></span>
+                                    <span class="strength-bar" data-level="4"></span>
+                                </div>
+                                <div class="strength-header">
+                                    <span class="strength-label">Force : <strong id="strengthText">—</strong></span>
+                                </div>
+                                <ul class="strength-checks" id="strengthChecks">
+                                    <li data-check="length"><i class="bi bi-circle"></i> Au moins 8 caractères</li>
+                                    <li data-check="lower"><i class="bi bi-circle"></i> Une minuscule</li>
+                                    <li data-check="upper"><i class="bi bi-circle"></i> Une majuscule</li>
+                                    <li data-check="number"><i class="bi bi-circle"></i> Un chiffre</li>
+                                    <li data-check="special"><i class="bi bi-circle"></i> Un caractère spécial</li>
+                                </ul>
+                            </div>
+
                             @error('password')<p class="error-text">{{ $message }}</p>@enderror
                         </div>
 
+                        {{-- ✅ CONFIRMATION avec vérification de correspondance --}}
                         <div class="form-field">
-                            <div class="input-wrap">
+                            <div class="input-wrap password-wrap">
                                 <input type="password" name="password_confirmation"
                                        id="password_confirmation"
                                        placeholder=" " required
@@ -216,13 +247,28 @@
                                     Confirmer <span class="text-red-500">*</span>
                                 </label>
                                 <i class="bi bi-lock icon" aria-hidden="true"></i>
+                                <button type="button"
+                                        class="toggle-password"
+                                        data-target="password_confirmation"
+                                        aria-label="Afficher la confirmation"
+                                        aria-pressed="false"
+                                        tabindex="-1">
+                                    <i class="bi bi-eye" aria-hidden="true"></i>
+                                </button>
                                 <div class="line-focus"></div>
                             </div>
+
+                            {{-- ✅ Indicateur de correspondance --}}
+                            <div class="match-indicator" id="matchIndicator" aria-live="polite" hidden>
+                                <i class="match-icon bi bi-circle" aria-hidden="true"></i>
+                                <span class="match-text">—</span>
+                            </div>
+
                             @error('password_confirmation')<p class="error-text">{{ $message }}</p>@enderror
                         </div>
                     </div>
 
-                    {{-- ✅ NOUVEAU — Lien avec un compte abonné (optionnel) --}}
+                    {{-- Lien avec un compte abonné (optionnel) --}}
                     @if(isset($contacts) && $contacts->isNotEmpty())
                         <div class="form-row full-width">
                             <div class="form-field">
@@ -266,10 +312,10 @@
                 </div>
             </div>
             <div class="flex justify-between items-center mt-4 step-actions">
-                <button type="button" class="btn-prev" @click="step = 1">
+                <button type="button" class="btn-prev" @click="goToStep(1)">
                     <i class="bi bi-arrow-left" aria-hidden="true"></i> Précédent
                 </button>
-                <button type="button" class="btn-next" @click="step = 3">
+                <button type="button" class="btn-next" @click="goToStep(3)">
                     Suivant <i class="bi bi-arrow-right" aria-hidden="true"></i>
                 </button>
             </div>
@@ -339,14 +385,14 @@
                     <div class="form-row full-width">
                         <div class="form-field">
                             <label for="photo" class="field-label">Photo de profil</label>
-                            <div class="file-upload-wrap">
+                            <div class="file-upload-wrap" id="dropZone">
                                 <input type="file" name="photo" id="photo"
                                        accept="image/jpeg,image/png,image/jpg,image/webp"
                                        class="file-input">
                                 <label for="photo" class="file-label">
                                     <i class="bi bi-cloud-upload" aria-hidden="true"></i>
                                     <span>Choisir une image</span>
-                                    <small>JPG, PNG, WebP — max 2 Mo</small>
+                                    <small>JPG, PNG, WebP — max 2 Mo (glisser-déposer accepté)</small>
                                 </label>
                             </div>
                             @error('photo')<p class="error-text">{{ $message }}</p>@enderror
@@ -355,7 +401,7 @@
                 </div>
             </div>
             <div class="flex justify-between items-center mt-4 step-actions">
-                <button type="button" class="btn-prev" @click="step = 2">
+                <button type="button" class="btn-prev" @click="goToStep(2)">
                     <i class="bi bi-arrow-left" aria-hidden="true"></i> Précédent
                 </button>
                 <button type="submit" class="btn-submit" id="submitBtn">
@@ -588,6 +634,9 @@
     }
     .textarea-wrap i.icon { top: 0.9rem; transform: none; }
 
+    /* ✅ Décalage de l'icône cadenas pour les champs password (place à l'œil) */
+    .input-wrap.password-wrap i.icon { right: 2.6rem; }
+
     .input-wrap input:focus ~ i.icon,
     .textarea-wrap textarea:focus ~ i.icon {
         color: #667eea;
@@ -635,7 +684,170 @@
     }
 
     /* ═══════════════════════════════════════════════════════════
-       LINK CONTACT WRAPPER (nouveau)
+       ✅ TOGGLE ŒIL MOT DE PASSE
+       ═══════════════════════════════════════════════════════════ */
+    .toggle-password {
+        position: absolute;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 36px;
+        height: 36px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        color: #94a3b8;
+        transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
+        padding: 0;
+        font-size: 1.1rem;
+        z-index: 2;
+    }
+    .toggle-password:hover {
+        color: #667eea;
+        background: rgba(102,126,234,0.08);
+    }
+    .toggle-password:focus-visible {
+        outline: 2px solid #667eea;
+        outline-offset: 2px;
+    }
+    .toggle-password.is-visible { color: #667eea; }
+    .toggle-password.is-visible:hover { background: rgba(102,126,234,0.15); }
+
+    /* ═══════════════════════════════════════════════════════════
+       ✅ INDICATEUR DE FORCE DU MOT DE PASSE
+       ═══════════════════════════════════════════════════════════ */
+    .password-strength {
+        margin-top: 0.85rem;
+        padding: 0.9rem 1rem;
+        background: #f8fafc;
+        border: 1px solid #f1f5f9;
+        border-radius: 12px;
+        animation: fadeIn 0.35s ease forwards;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(-6px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+
+    .strength-bars {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 5px;
+        margin-bottom: 0.6rem;
+    }
+    .strength-bar {
+        height: 5px;
+        background: #e2e8f0;
+        border-radius: 999px;
+        transition: background 0.35s cubic-bezier(0.4,0,0.2,1);
+    }
+
+    /* Niveaux 1 à 4 */
+    .password-strength[data-strength="1"] .strength-bar[data-level="1"] { background: #ef4444; }
+    .password-strength[data-strength="2"] .strength-bar[data-level="1"],
+    .password-strength[data-strength="2"] .strength-bar[data-level="2"] { background: #f59e0b; }
+    .password-strength[data-strength="3"] .strength-bar[data-level="1"],
+    .password-strength[data-strength="3"] .strength-bar[data-level="2"],
+    .password-strength[data-strength="3"] .strength-bar[data-level="3"] { background: #eab308; }
+    .password-strength[data-strength="4"] .strength-bar { background: #22c55e; }
+
+    .strength-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.6rem;
+    }
+    .strength-label {
+        font-size: 0.78rem;
+        color: #64748b;
+        font-weight: 500;
+    }
+    .strength-label strong {
+        font-weight: 700;
+        transition: color 0.3s;
+    }
+    .password-strength[data-strength="1"] .strength-label strong { color: #ef4444; }
+    .password-strength[data-strength="2"] .strength-label strong { color: #f59e0b; }
+    .password-strength[data-strength="3"] .strength-label strong { color: #ca8a04; }
+    .password-strength[data-strength="4"] .strength-label strong { color: #16a34a; }
+
+    .strength-checks {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 0.35rem 0.75rem;
+        list-style: none;
+        padding: 0;
+        margin: 0;
+    }
+    .strength-checks li {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.75rem;
+        color: #94a3b8;
+        transition: color 0.25s;
+        line-height: 1.3;
+    }
+    .strength-checks li i {
+        font-size: 0.65rem;
+        transition: all 0.25s;
+        flex-shrink: 0;
+    }
+    .strength-checks li.is-valid {
+        color: #16a34a;
+        font-weight: 500;
+    }
+    .strength-checks li.is-valid i::before {
+        content: "\f26b"; /* bi-check-circle-fill fallback via font */
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       ✅ INDICATEUR DE CORRESPONDANCE DES MOTS DE PASSE
+       ═══════════════════════════════════════════════════════════ */
+    .match-indicator {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 0.6rem;
+        padding: 0.55rem 0.85rem;
+        border-radius: 10px;
+        font-size: 0.82rem;
+        font-weight: 600;
+        transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
+        animation: fadeIn 0.35s ease forwards;
+    }
+    .match-indicator .match-icon { font-size: 0.9rem; }
+
+    .match-indicator.is-match {
+        background: #ecfdf5;
+        color: #047857;
+        border: 1px solid #a7f3d0;
+    }
+    .match-indicator.is-match .match-icon::before {
+        content: "\f26b"; /* check circle */
+    }
+
+    .match-indicator.is-mismatch {
+        background: #fef2f2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
+    }
+    .match-indicator.is-mismatch .match-icon::before {
+        content: "\f623"; /* exclamation circle */
+    }
+
+    .match-indicator.is-empty {
+        background: #f8fafc;
+        color: #94a3b8;
+        border: 1px solid #f1f5f9;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       LINK CONTACT WRAPPER
        ═══════════════════════════════════════════════════════════ */
     .link-contact-wrapper {
         padding: 1.25rem;
@@ -699,7 +911,7 @@
     .link-contact-hint strong { color: #1e293b; }
 
     /* ═══════════════════════════════════════════════════════════
-       FILE UPLOAD
+       FILE UPLOAD (avec drag & drop)
        ═══════════════════════════════════════════════════════════ */
     .file-upload-wrap { position: relative; margin-top: 0.5rem; }
     .file-input {
@@ -721,7 +933,7 @@
         color: #475569;
         font-weight: 500;
         cursor: pointer;
-        transition: all 0.3s;
+        transition: all 0.3s cubic-bezier(0.4,0,0.2,1);
         font-size: 0.9rem;
     }
     .file-label small {
@@ -731,7 +943,17 @@
         font-weight: 400;
         margin-top: 2px;
     }
-    .file-input:hover + .file-label { border-color: #667eea; color: #667eea; background: #f1f5f9; }
+    .file-input:hover + .file-label,
+    .file-upload-wrap.is-dragover .file-label {
+        border-color: #667eea;
+        color: #667eea;
+        background: #f1f5f9;
+        transform: scale(1.01);
+    }
+    .file-upload-wrap.is-dragover .file-label {
+        background: #eef2ff;
+        border-style: solid;
+    }
 
     /* ═══════════════════════════════════════════════════════════
        BUTTONS
@@ -761,9 +983,10 @@
     .btn-next:hover { background: #667eea; transform: translateY(-2px); box-shadow: 0 10px 30px rgba(102,126,234,0.3); }
 
     .btn-submit:disabled {
-        opacity: 0.7;
+        opacity: 0.55;
         cursor: not-allowed;
         transform: none;
+        background: #94a3b8;
     }
 
     .btn-prev {
@@ -803,15 +1026,12 @@
     .flash-error   { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
 
     /* ═══════════════════════════════════════════════════════════
-       RESPONSIVE — TABLETTE (≤ 992px)
+       RESPONSIVE
        ═══════════════════════════════════════════════════════════ */
     @media (max-width: 992px) {
         .form-container { padding: 2rem; }
     }
 
-    /* ═══════════════════════════════════════════════════════════
-       RESPONSIVE — MOBILE (≤ 768px)
-       ═══════════════════════════════════════════════════════════ */
     @media (max-width: 768px) {
         .form-container { padding: 1.5rem; border-radius: 16px; }
         .form-row { grid-template-columns: 1fr; }
@@ -824,7 +1044,6 @@
         .form-subtitle { font-size: 0.85rem; }
         .section-title { font-size: 0.9rem; }
 
-        /* Anti-zoom iOS */
         .input-wrap input,
         .textarea-wrap textarea,
         .select-wrap select { font-size: 16px; }
@@ -837,19 +1056,13 @@
         .step-actions .btn-submit,
         .step-actions .btn-cancel,
         .step-actions .btn-next,
-        .step-actions .btn-prev {
-            width: 100%;
-        }
+        .step-actions .btn-prev { width: 100%; }
 
-        .file-label {
-            width: 100%;
-            justify-content: center;
-        }
+        .file-label { width: 100%; justify-content: center; }
+
+        .strength-checks { grid-template-columns: 1fr 1fr; }
     }
 
-    /* ═══════════════════════════════════════════════════════════
-       RESPONSIVE — PETIT MOBILE (≤ 480px)
-       ═══════════════════════════════════════════════════════════ */
     @media (max-width: 480px) {
         .form-container { padding: 1.15rem; }
         .form-title { font-size: 1.2rem; }
@@ -859,6 +1072,9 @@
         .link-contact-icon { width: 32px; height: 32px; font-size: 0.95rem; }
         .link-contact-label { font-size: 0.85rem; }
         .link-contact-hint { font-size: 0.78rem; }
+
+        .strength-checks { grid-template-columns: 1fr; }
+        .password-strength { padding: 0.75rem 0.85rem; }
     }
 
     /* ═══════════════════════════════════════════════════════════
@@ -879,10 +1095,8 @@
        ACCESSIBILITÉ
        ═══════════════════════════════════════════════════════════ */
     @media (prefers-reduced-motion: reduce) {
-        .header-container,
-        .form-container,
-        .stepper,
-        .form-field {
+        .header-container, .form-container, .stepper, .form-field,
+        .password-strength, .match-indicator {
             animation: none;
             opacity: 1;
             transform: none;
@@ -906,30 +1120,318 @@
                         this.step = 3;
                     }
                 @endif
+            },
+            goToStep(target) {
+                // ✅ Validation légère avant de changer d'étape
+                if (target > this.step) {
+                    if (!this.validateStep(this.step)) return;
+                }
+                this.step = target;
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            },
+            validateStep(stepNum) {
+                const stepEl = document.querySelector(`[x-show="step === ${stepNum}"]`);
+                if (!stepEl) return true;
+
+                const requiredFields = stepEl.querySelectorAll('[required]');
+                let firstInvalid = null;
+
+                requiredFields.forEach(field => {
+                    if (!field.value.trim()) {
+                        field.classList.add('is-invalid');
+                        if (!firstInvalid) firstInvalid = field;
+                    } else {
+                        field.classList.remove('is-invalid');
+                    }
+                });
+
+                // ✅ Vérification spéciale pour l'étape 2 : mots de passe
+                if (stepNum === 2) {
+                    const pwd = document.getElementById('password');
+                    const confirm = document.getElementById('password_confirmation');
+
+                    if (pwd && confirm && pwd.value && confirm.value && pwd.value !== confirm.value) {
+                        confirm.classList.add('is-invalid');
+                        if (!firstInvalid) firstInvalid = confirm;
+                        showToast('Les mots de passe ne correspondent pas.', 'error');
+                    }
+                }
+
+                if (firstInvalid) {
+                    firstInvalid.focus();
+                    firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    return false;
+                }
+                return true;
             }
         }));
     });
 
+    /* ============================================================
+       ✅ TOAST (petit feedback)
+    ============================================================ */
+    function showToast(message, type = 'info') {
+        let toast = document.getElementById('__toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = '__toast';
+            toast.style.cssText = `
+                position: fixed; top: 1.25rem; left: 50%; transform: translateX(-50%) translateY(-20px);
+                background: #1e293b; color: #fff; padding: .75rem 1.25rem; border-radius: 10px;
+                font-size: .88rem; font-weight: 600; z-index: 9999; box-shadow: 0 10px 30px rgba(0,0,0,.2);
+                opacity: 0; transition: all .35s cubic-bezier(.16,1,.3,1); pointer-events: none;
+                font-family: Inter, system-ui, sans-serif; max-width: 90vw;
+            `;
+            document.body.appendChild(toast);
+        }
+        toast.style.background = type === 'error' ? '#dc2626' : type === 'success' ? '#16a34a' : '#1e293b';
+        toast.textContent = message;
+        requestAnimationFrame(() => {
+            toast.style.opacity = '1';
+            toast.style.transform = 'translateX(-50%) translateY(0)';
+        });
+        clearTimeout(toast._t);
+        toast._t = setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(-50%) translateY(-20px)';
+        }, 3000);
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         const form = document.getElementById('userForm');
-        const btn = document.getElementById('submitBtn');
+        const btn  = document.getElementById('submitBtn');
 
+        /* ============================================================
+           ✅ TOGGLE VISIBILITÉ MOT DE PASSE
+        ============================================================ */
+        document.querySelectorAll('.toggle-password').forEach(toggle => {
+            toggle.addEventListener('click', () => {
+                const targetId = toggle.dataset.target;
+                const input = document.getElementById(targetId);
+                if (!input) return;
+
+                const isHidden = input.type === 'password';
+                input.type = isHidden ? 'text' : 'password';
+
+                const icon = toggle.querySelector('i');
+                icon.className = isHidden ? 'bi bi-eye-slash' : 'bi bi-eye';
+                toggle.classList.toggle('is-visible', isHidden);
+                toggle.setAttribute('aria-pressed', String(isHidden));
+                toggle.setAttribute('aria-label', isHidden ? 'Masquer le mot de passe' : 'Afficher le mot de passe');
+
+                // Garde le focus sur l'input pour une meilleure UX
+                const cursorPos = input.value.length;
+                input.focus();
+                try { input.setSelectionRange(cursorPos, cursorPos); } catch(e) {}
+            });
+        });
+
+        /* ============================================================
+           ✅ FORCE DU MOT DE PASSE
+        ============================================================ */
+        const pwdInput    = document.getElementById('password');
+        const confirmInput = document.getElementById('password_confirmation');
+        const strengthBox = document.getElementById('passwordStrength');
+        const strengthTxt = document.getElementById('strengthText');
+        const checksList  = document.getElementById('strengthChecks');
+        const matchBox    = document.getElementById('matchIndicator');
+
+        const LABELS = {
+            0: '—',
+            1: 'Très faible',
+            2: 'Faible',
+            3: 'Moyen',
+            4: 'Fort',
+        };
+
+        function evaluatePassword(pwd) {
+            const checks = {
+                length:  pwd.length >= 8,
+                lower:   /[a-z]/.test(pwd),
+                upper:   /[A-Z]/.test(pwd),
+                number:  /[0-9]/.test(pwd),
+                special: /[^A-Za-z0-9]/.test(pwd),
+            };
+            const score = Object.values(checks).filter(Boolean).length;
+
+            let level = 0;
+            if (pwd.length === 0) level = 0;
+            else if (score <= 2) level = 1;
+            else if (score === 3) level = 2;
+            else if (score === 4) level = 3;
+            else level = 4;
+
+            return { checks, score, level };
+        }
+
+        function updateStrength() {
+            if (!pwdInput || !strengthBox) return;
+            const pwd = pwdInput.value;
+
+            if (!pwd) {
+                strengthBox.hidden = true;
+                return;
+            }
+
+            strengthBox.hidden = false;
+            const { checks, level } = evaluatePassword(pwd);
+            strengthBox.dataset.strength = String(level);
+            if (strengthTxt) strengthTxt.textContent = LABELS[level];
+
+            // Mise à jour de la checklist
+            if (checksList) {
+                checksList.querySelectorAll('li').forEach(li => {
+                    const key = li.dataset.check;
+                    const valid = !!checks[key];
+                    li.classList.toggle('is-valid', valid);
+                    const icon = li.querySelector('i');
+                    if (icon) {
+                        icon.className = valid
+                            ? 'bi bi-check-circle-fill'
+                            : 'bi bi-circle';
+                    }
+                });
+            }
+        }
+
+        /* ============================================================
+           ✅ CORRESPONDANCE MOTS DE PASSE
+        ============================================================ */
+        function updateMatch() {
+            if (!pwdInput || !confirmInput || !matchBox) return;
+            const pwd = pwdInput.value;
+            const confirm = confirmInput.value;
+
+            if (!pwd && !confirm) {
+                matchBox.hidden = true;
+                return;
+            }
+
+            matchBox.hidden = false;
+            matchBox.classList.remove('is-match', 'is-mismatch', 'is-empty');
+            const icon = matchBox.querySelector('.match-icon');
+            const text = matchBox.querySelector('.match-text');
+
+            if (!confirm) {
+                matchBox.classList.add('is-empty');
+                if (icon) icon.className = 'match-icon bi bi-circle';
+                if (text) text.textContent = 'Confirmez le mot de passe';
+                setSubmitState(false, true);
+                return;
+            }
+
+            if (pwd === confirm) {
+                matchBox.classList.add('is-match');
+                if (icon) icon.className = 'match-icon bi bi-check-circle-fill';
+                if (text) text.textContent = 'Les mots de passe correspondent';
+                setSubmitState(true);
+            } else {
+                matchBox.classList.add('is-mismatch');
+                if (icon) icon.className = 'match-icon bi bi-exclamation-circle-fill';
+                if (text) text.textContent = 'Les mots de passe ne correspondent pas';
+                setSubmitState(false);
+            }
+        }
+
+        /* ============================================================
+           ✅ ÉTAT DU BOUTON SUBMIT
+        ============================================================ */
+        let pwdMatchOK = true;
+        function setSubmitState(ok, empty = false) {
+            pwdMatchOK = ok || empty;
+            const btn = document.getElementById('submitBtn');
+            if (!btn) return;
+            if (!pwdInput || !pwdInput.value || !confirmInput || !confirmInput.value) {
+                btn.disabled = false;
+                return;
+            }
+            btn.disabled = !ok;
+            if (!ok) {
+                btn.setAttribute('title', 'Les mots de passe ne correspondent pas');
+            } else {
+                btn.removeAttribute('title');
+            }
+        }
+
+        if (pwdInput) {
+            pwdInput.addEventListener('input', () => {
+                updateStrength();
+                updateMatch();
+                pwdInput.classList.toggle('is-invalid', false);
+            });
+            pwdInput.addEventListener('blur', () => {
+                if (pwdInput.value.length > 0 && pwdInput.value.length < 6) {
+                    pwdInput.classList.add('is-invalid');
+                }
+            });
+        }
+
+        if (confirmInput) {
+            confirmInput.addEventListener('input', () => {
+                updateMatch();
+                confirmInput.classList.toggle('is-invalid', false);
+            });
+        }
+
+        // Initialise l'état si erreurs de validation serveur
+        updateStrength();
+        updateMatch();
+
+        /* ============================================================
+           ✅ SUBMIT : bloquer si mismatch
+        ============================================================ */
         if (form && btn) {
-            form.addEventListener('submit', () => {
+            form.addEventListener('submit', (e) => {
+                if (pwdInput && confirmInput && pwdInput.value && confirmInput.value) {
+                    if (pwdInput.value !== confirmInput.value) {
+                        e.preventDefault();
+                        showToast('Les mots de passe ne correspondent pas.', 'error');
+                        confirmInput.focus();
+                        return;
+                    }
+                }
                 btn.disabled = true;
                 btn.innerHTML = '<span class="spinner-border me-2" aria-hidden="true"></span> Envoi...';
             });
         }
 
-        // ✅ Aperçu du nom de fichier sélectionné
+        /* ============================================================
+           ✅ APERÇU DU FICHIER SÉLECTIONNÉ
+        ============================================================ */
         const photoInput = document.getElementById('photo');
-        const fileLabel = photoInput?.parentElement?.querySelector('.file-label span');
-        if (photoInput && fileLabel) {
+        const fileLabelSpan = photoInput?.parentElement?.querySelector('.file-label span');
+        if (photoInput && fileLabelSpan) {
             photoInput.addEventListener('change', function () {
                 const file = this.files && this.files[0];
-                fileLabel.textContent = file
+                fileLabelSpan.textContent = file
                     ? (file.name.length > 30 ? file.name.substring(0, 27) + '...' : file.name)
                     : 'Choisir une image';
+            });
+        }
+
+        /* ============================================================
+           ✅ DRAG & DROP PHOTO
+        ============================================================ */
+        const dropZone = document.getElementById('dropZone');
+        if (dropZone && photoInput) {
+            ['dragenter', 'dragover'].forEach(evt => {
+                dropZone.addEventListener(evt, (e) => {
+                    e.preventDefault();
+                    dropZone.classList.add('is-dragover');
+                });
+            });
+            ['dragleave', 'drop'].forEach(evt => {
+                dropZone.addEventListener(evt, (e) => {
+                    e.preventDefault();
+                    dropZone.classList.remove('is-dragover');
+                });
+            });
+            dropZone.addEventListener('drop', (e) => {
+                const files = e.dataTransfer?.files;
+                if (files && files.length) {
+                    photoInput.files = files;
+                    photoInput.dispatchEvent(new Event('change', { bubbles: true }));
+                }
             });
         }
     });

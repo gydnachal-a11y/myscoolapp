@@ -20,6 +20,9 @@
     </script>
 
     <style>
+        /* ════════════════════════════════════════════════════════
+           ANTI-FLICKER
+           ════════════════════════════════════════════════════════ */
         html { background-color: #f1f5f9; }
         html.no-alpine body { visibility: hidden; }
         html.alpine-ready body {
@@ -33,6 +36,9 @@
         html.sidebar-collapsed-preload .sidebar-aside { width: 5rem !important; }
         [x-cloak] { display: none !important; }
 
+        /* ════════════════════════════════════════════════════════
+           RESET GLOBAL
+           ════════════════════════════════════════════════════════ */
         html, body {
             overflow-x: hidden;
             max-width: 100vw;
@@ -41,11 +47,32 @@
 
         .flex, .inline-flex { min-width: 0; }
 
-        table {
-            display: block;
-            overflow-x: auto;
-            max-width: 100%;
-            -webkit-overflow-scrolling: touch;
+        /* ════════════════════════════════════════════════════════
+           ✅ FIX CRITIQUE — Les tables restent des <table> sur desktop
+           ════════════════════════════════════════════════════════
+           La règle `table { display: block; }` cassait TOUTES les tables
+           de l'application sur desktop (les colonnes ne respectaient plus
+           leurs largeurs, table-layout: fixed ne s'appliquait plus, etc.).
+           On la limite donc au mobile uniquement.
+        */
+        @media (max-width: 767px) {
+            /* Mobile : scroll horizontal fluide pour tables NON stylées.
+               Les .data-table ont leur propre système de cartes,
+               cette règle ne les affecte donc pas. */
+            table:not(.data-table) {
+                display: block;
+                overflow-x: auto;
+                max-width: 100%;
+                -webkit-overflow-scrolling: touch;
+            }
+        }
+
+        @media (min-width: 768px) {
+            /* Desktop : on ne touche pas au comportement natif des tables */
+            table {
+                display: table;
+                max-width: 100%;
+            }
         }
 
         img, video, iframe {
@@ -53,6 +80,9 @@
             height: auto;
         }
 
+        /* ════════════════════════════════════════════════════════
+           SCROLLBARS
+           ════════════════════════════════════════════════════════ */
         * {
             scrollbar-width: thin;
             scrollbar-color: transparent transparent;
@@ -333,16 +363,6 @@
             to   { opacity: 1; transform: translateY(0); }
         }
 
-        /* ✅ NOUVEAU : Animations de scroll pour le contenu */
-        @keyframes contentRevealUp {
-            from { opacity: 0; transform: translateY(24px); }
-            to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes contentRevealFade {
-            from { opacity: 0; }
-            to   { opacity: 1; }
-        }
-
         .badge-urgent { animation: pulse-badge 1.5s ease-in-out infinite; }
         .menu-item-urgent { position: relative; }
         .menu-item-urgent::after {
@@ -583,7 +603,7 @@
         }
 
         /* ═══════════════════════════════════════════════════════════
-           ✅ NOUVEAU : BOUTON DÉCONNEXION MIS EN ÉVIDENCE
+           BOUTON DÉCONNEXION
            ═══════════════════════════════════════════════════════════ */
         .sidebar-logout {
             background: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(220, 38, 38, 0.04) 100%);
@@ -625,11 +645,10 @@
             transform: translateX(2px) scale(1.1);
             color: #fff !important;
         }
-        /* Version réduite : icône seule */
         .sidebar-logout.justify-center::before { display: none; }
 
         /* ═══════════════════════════════════════════════════════════
-           ✅ NOUVEAU : BOUTON TOGGLE SIDEBAR (flèche) — TOGGLE STATE
+           BOUTON TOGGLE SIDEBAR
            ═══════════════════════════════════════════════════════════ */
         .sidebar-toggle-btn {
             color: #64748b;
@@ -690,17 +709,20 @@
             min-width: 0;
         }
 
-        .content-main table {
-            display: block;
-            overflow-x: auto;
-            max-width: 100%;
-            -webkit-overflow-scrolling: touch;
+        /* ✅ FIX : Le scroll horizontal des tables dans le contenu
+           est limité au mobile. Sur desktop, on laisse les tables
+           natives fonctionner (table-layout: fixed, etc.). */
+        @media (max-width: 767px) {
+            .content-main table:not(.data-table) {
+                display: block;
+                overflow-x: auto;
+                max-width: 100%;
+                -webkit-overflow-scrolling: touch;
+            }
         }
 
         /* ═══════════════════════════════════════════════════════════
-           ✅ NOUVEAU : Animations de scroll pour le contenu
-           Appliquées automatiquement aux éléments marqués .content-anim
-           OU aux enfants directs de .content-main
+           ANIMATIONS DE SCROLL POUR LE CONTENU
            ═══════════════════════════════════════════════════════════ */
         .content-anim {
             opacity: 0;
@@ -714,21 +736,18 @@
             transform: translateY(0);
         }
 
-        /* Délais en cascade */
         .content-anim.delay-1 { transition-delay: 0.08s; }
         .content-anim.delay-2 { transition-delay: 0.16s; }
         .content-anim.delay-3 { transition-delay: 0.24s; }
         .content-anim.delay-4 { transition-delay: 0.32s; }
         .content-anim.delay-5 { transition-delay: 0.40s; }
 
-        /* Variante : fade simple */
         .content-anim-fade {
             opacity: 0;
             transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .content-anim-fade.is-visible { opacity: 1; }
 
-        /* Variante : slide depuis la gauche */
         .content-anim-left {
             opacity: 0;
             transform: translateX(-20px);
@@ -740,7 +759,6 @@
             transform: translateX(0);
         }
 
-        /* Variante : scale */
         .content-anim-scale {
             opacity: 0;
             transform: scale(0.96);
@@ -752,7 +770,6 @@
             transform: scale(1);
         }
 
-        /* Fallback : si IntersectionObserver non supporté, tout visible */
         @media (prefers-reduced-motion: reduce) {
             .content-anim,
             .content-anim-fade,
@@ -838,13 +855,11 @@
                     {{ strtoupper(substr($settings->site_name ?? 'A', 0, 1)) }}
                 </div>
 
-                {{-- Fermer menu mobile --}}
                 <button @click="sidebarOpen = false"
                         class="lg:hidden text-slate-500 hover:text-white transition p-1">
                     <i class="fa-solid fa-xmark text-lg"></i>
                 </button>
 
-                {{-- ✅ TOGGLE SIDEBAR — La flèche change de direction --}}
                 <button type="button"
                         @click="toggleSidebar()"
                         x-show="!sidebarCollapsed"
@@ -855,7 +870,6 @@
                 </button>
             </div>
 
-            {{-- ✅ BOUTON FLÈCHE DROITE quand collapsed (dans le profil) --}}
             <div x-show="sidebarCollapsed" class="px-2 mb-2 flex justify-center">
                 <button type="button"
                         @click="toggleSidebar()"
@@ -971,7 +985,7 @@
                 </div>
             </nav>
 
-            {{-- ✅ PIED — Bouton déconnexion mis en évidence --}}
+            {{-- PIED --}}
             <div class="px-3 py-4 border-t border-white/5">
                 @if($currentUser && Route::has($logoutRoute))
                     <form action="{{ route($logoutRoute) }}" method="POST">
@@ -1126,7 +1140,7 @@
                     this.openActiveSection();
                     this.openUrgentSection();
 
-                    // ✅ Init animations du contenu
+                    // Init animations du contenu
                     this.$nextTick(() => {
                         this.initContentAnimations();
                     });
@@ -1181,9 +1195,7 @@
                 },
 
                 /* ═══════════════════════════════════════════════════
-                   ✅ ANIMATIONS DE SCROLL POUR LE CONTENU
-                   Applique automatiquement .content-anim aux
-                   enfants directs du contenu + observe leur apparition
+                   ANIMATIONS DE SCROLL POUR LE CONTENU
                    ═══════════════════════════════════════════════════ */
                 initContentAnimations() {
                     const wrap = document.getElementById('contentWrap');
@@ -1191,14 +1203,12 @@
 
                     const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
                     if (prefersReduced || !('IntersectionObserver' in window)) {
-                        // Fallback : tout visible immédiatement
                         wrap.querySelectorAll('*').forEach(el => {
                             el.classList.add('is-visible');
                         });
                         return;
                     }
 
-                    // ─── Candidats : enfants directs + sections + cards connues
                     const selectors = [
                         ':scope > *',
                         ':scope section',
@@ -1214,30 +1224,23 @@
                     selectors.forEach(sel => {
                         try {
                             wrap.querySelectorAll(sel).forEach(el => {
-                                // Éviter les wrappers internes trop profonds
                                 if (el.classList.contains('content-anim')) return;
                                 candidates.add(el);
                             });
                         } catch (e) { /* ignore */ }
                     });
 
-                    // Filtre : garder uniquement ceux qui ont du contenu significatif
                     const targets = Array.from(candidates).filter(el => {
-                        // Ignorer les éléments vides ou trop petits
                         if (el.offsetWidth < 40 || el.offsetHeight < 20) return false;
-                        // Ignorer les éléments déjà visibles (au-dessus du fold)
                         return true;
                     });
 
-                    // Marquer les éléments
                     targets.forEach((el, i) => {
                         el.classList.add('content-anim');
-                        // Délais en cascade par groupe de 5
                         const delay = (i % 5) + 1;
                         el.classList.add(`delay-${delay}`);
                     });
 
-                    // ─── Observer
                     this.contentObserver = new IntersectionObserver((entries) => {
                         entries.forEach(entry => {
                             if (entry.isIntersecting) {
@@ -1252,7 +1255,6 @@
 
                     targets.forEach(el => this.contentObserver.observe(el));
 
-                    // ─── Sécurité : rendre visibles les éléments au-dessus du fold après 300ms
                     setTimeout(() => {
                         targets.forEach(el => {
                             const rect = el.getBoundingClientRect();

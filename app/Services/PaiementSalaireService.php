@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Services;
 
 use App\Models\MoisScolaire;
@@ -13,7 +15,7 @@ use Throwable;
 class PaiementSalaireService
 {
     // ============================================================
-    // CONSTANTES — Délégation au modèle
+    // CONSTANTES
     // ============================================================
 
     public const STATUT_PAYE     = PaiementSalaire::STATUT_PAYE;
@@ -27,7 +29,7 @@ class PaiementSalaireService
     private const MONTANT_PRECISION = 2;
 
     public function __construct(
-        private AvanceService $avanceService
+        private readonly AvanceService $avanceService,
     ) {}
 
     // ============================================================
@@ -49,7 +51,7 @@ class PaiementSalaireService
             ]);
         }
 
-        DB::transaction(function () use ($paiementsData, $tauxChange) {
+        DB::transaction(function () use ($paiementsData, $tauxChange): void {
             foreach ($paiementsData as $index => $data) {
                 try {
                     $this->creerUnPaiement($data, $tauxChange);
@@ -81,9 +83,12 @@ class PaiementSalaireService
         array $data,
         float $tauxChange
     ): void {
-        DB::transaction(function () use ($paiementSalaire, $data, $tauxChange) {
-            $user = User::findOrFail($data['user_id']);
+        DB::transaction(function () use ($paiementSalaire, $data, $tauxChange): void {
+            $user   = User::findOrFail($data['user_id']);
             $moisId = (int) $data['mois_scolaire_id'];
+
+            // ✅ Nettoyage : supprime les doublons soft-deleted éventuels
+            $this->purgerPaiementsSupprimes($user->id, $moisId, $paiementSalaire->id);
 
             // Unicité (hors paiement courant)
             if ($this->paiementExiste($user->id, $moisId, $paiementSalaire->id)) {
@@ -133,7 +138,7 @@ class PaiementSalaireService
      */
     public function supprimerPaiement(PaiementSalaire $paiementSalaire): void
     {
-        DB::transaction(function () use ($paiementSalaire) {
+        DB::transaction(function () use ($paiementSalaire): void {
             $paiementId = $paiementSalaire->id;
             $userId     = $paiementSalaire->user_id;
 
@@ -163,16 +168,25 @@ class PaiementSalaireService
     {
         if (empty($data['user_id']) || empty($data['mois_scolaire_id'])) {
             throw ValidationException::withMessages([
-                'user_id' => 'L\'employé et le mois sont obligatoires.',
+                'user_id' => "L'employé et le mois sont obligatoires.",
             ]);
         }
 
         $user = User::findOrFail($data['user_id']);
         $mois = MoisScolaire::findOrFail($data['mois_scolaire_id']);
 
-        // Vérifie l'unicité
+        // ============================================================
+        // ✅ FIX : Nettoie les paiements soft-deleted en doublon
+        // ============================================================
+        // La contrainte unique `unique_paiement_employe_mois` en DB ne
+        // tient PAS compte de `deleted_at`. Sans ce nettoyage, un ancien
+        // paiement mis en corbeille bloque toute nouvelle création.
+        $this->purgerPaiementsSupprimes($user->id, $mois->id);
+
+        // Vérifie l'unicité (parmi les paiements ACTIFS)
         if ($this->paiementExiste($user->id, $mois->id)) {
             $moisLabel = $mois->nom_mois ?? $mois->mois;
+
             throw ValidationException::withMessages([
                 'user_id' => "Un paiement existe déjà pour {$user->name} et le mois {$moisLabel}.",
             ]);
@@ -229,8 +243,8 @@ class PaiementSalaireService
         float $tauxChange,
         string $datePaiement
     ): array {
-        $salaire = $this->arrondir($this->avanceService->getSalaireMensuelUsd($user));
-        $dette   = $this->arrondir($this->avanceService->getDetteTotale($user));
+        $salaire = $this->arrondir((float) $this->avanceService->getSalaireMensuelUsd($user));
+        $dette   = $this->arrondir((float) $this->avanceService->getDetteTotale($user));
 
         // Remboursement automatique : min(salaire, dette)
         $remboursementDette = min($salaire, $dette);
@@ -254,7 +268,6 @@ class PaiementSalaireService
         $estPaye        = $statut === self::STATUT_PAYE;
         $montantRestant = $reportDette;
 
-        // ✅ Retourne UNIQUEMENT les colonnes existantes en base
         $montants = [
             'user_id'              => $user->id,
             'mois_scolaire_id'     => $moisScolaireId,
@@ -293,17 +306,16 @@ class PaiementSalaireService
             return;
         }
 
-        $motifTypeRenseigne  = !blank($motifEcartType);
-        $motifTexteRenseigne = !blank($motifEcart);
+        $motifTypeRenseigne  = ! blank($motifEcartType);
+        $motifTexteRenseigne = ! blank($motifEcart);
 
-        if (!$motifTypeRenseigne && !$motifTexteRenseigne) {
+        if (! $motifTypeRenseigne && ! $motifTexteRenseigne) {
             throw ValidationException::withMessages([
                 'motif_ecart' => "Le motif d'écart est obligatoire lorsque le montant payé diffère du net à payer.",
             ]);
         }
 
-        // Si le type choisi est "autre", le texte libre est obligatoire
-        if ($motifEcartType === 'autre' && !$motifTexteRenseigne) {
+        if ($motifEcartType === 'autre' && ! $motifTexteRenseigne) {
             throw ValidationException::withMessages([
                 'motif_ecart' => "Veuillez préciser le motif d'écart.",
             ]);
@@ -332,7 +344,7 @@ class PaiementSalaireService
             $tauxChange
         );
 
-        $totalRembourse = !empty($remboursements)
+        $totalRembourse = ! empty($remboursements)
             ? $this->arrondir(array_sum(array_column($remboursements, 'montant_rembourse_usd')))
             : 0.0;
 
@@ -358,7 +370,48 @@ class PaiementSalaireService
     // ============================================================
 
     /**
-     * Vérifie si un paiement existe déjà pour un employé et un mois.
+     * ✅ NOUVEAU : Supprime définitivement les paiements soft-deleted
+     *    pour un user/mois donné.
+     *
+     * La contrainte unique `unique_paiement_employe_mois` ne tient pas
+     * compte de `deleted_at`. Sans ce nettoyage, un paiement mis en
+     * corbeille bloque toute nouvelle création.
+     *
+     * @param  int|null  $exceptId  ID à NE PAS supprimer (en cas de mise à jour)
+     */
+    private function purgerPaiementsSupprimes(
+        int $userId,
+        int $moisScolaireId,
+        ?int $exceptId = null
+    ): void {
+        $deleted = PaiementSalaire::onlyTrashed()
+            ->where('user_id', $userId)
+            ->where('mois_scolaire_id', $moisScolaireId)
+            ->when($exceptId, fn ($q) => $q->whereKeyNot($exceptId))
+            ->get();
+
+        if ($deleted->isEmpty()) {
+            return;
+        }
+
+        $count = $deleted->count();
+        $ids   = $deleted->pluck('id')->all();
+
+        PaiementSalaire::onlyTrashed()
+            ->whereIn('id', $ids)
+            ->forceDelete();
+
+        Log::info('Paiements soft-deleted purgés avant création', [
+            'user_id'         => $userId,
+            'mois_scolaire_id'=> $moisScolaireId,
+            'count'           => $count,
+            'ids'             => $ids,
+            'admin_id'        => auth()->id(),
+        ]);
+    }
+
+    /**
+     * Vérifie si un paiement ACTIF existe déjà pour un employé et un mois.
      */
     private function paiementExiste(int $userId, int $moisScolaireId, ?int $excludeId = null): bool
     {
@@ -383,9 +436,6 @@ class PaiementSalaireService
 
     /**
      * Arrondit un montant à 2 décimales.
-     *
-     * ⚠️ Correction : avant, la méthode retournait un `int`, perdant les centimes.
-     *    Maintenant elle retourne un `float` arrondi à 2 décimales.
      */
     private function arrondir(float $montant): float
     {

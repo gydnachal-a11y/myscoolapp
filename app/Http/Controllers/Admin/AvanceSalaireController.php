@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
@@ -12,19 +14,18 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\View\View;
-use Illuminate\Validation\ValidationException;
+use Throwable;
 
 class AvanceSalaireController extends Controller
 {
-    public function __construct(protected AvanceService $avanceService) {}
+    public function __construct(
+        protected AvanceService $avanceService,
+    ) {}
 
     // ============================================================
-    // LISTE DES AVANCES
+    // INDEX — Liste des avances
     // ============================================================
 
-    /**
-     * Liste paginée des avances avec filtres.
-     */
     public function index(Request $request): View
     {
         $request->validate([
@@ -36,7 +37,7 @@ class AvanceSalaireController extends Controller
             ->when($request->filled('user_id'), fn ($q) => $q->forUser((int) $request->user_id))
             ->when($request->filled('statut'), fn ($q) => $q->where('statut', $request->statut))
             ->when($request->filled('recherche'), function ($q) use ($request) {
-                $search = trim($request->recherche);
+                $search = trim((string) $request->input('recherche'));
                 $q->whereHas('user', function ($q2) use ($search) {
                     $q2->where('name', 'like', "%{$search}%")
                        ->orWhere('email', 'like', "%{$search}%");
@@ -46,19 +47,18 @@ class AvanceSalaireController extends Controller
             ->paginate(20)
             ->appends($request->query());
 
-        $users = User::orderBy('name')->get(['id', 'name', 'email']);
+        // ✅ Charge tous les users complets (avec type_salaire + salaire_*)
+        $users = User::orderBy('name')->get();
         $mois  = MoisScolaire::orderBy('mois')->get();
 
-        // Statistiques globales
         $stats = [
-            'total'       => AvanceSalaire::count(),
-            'actives'     => AvanceSalaire::actives()->count(),
-            'remboursees' => AvanceSalaire::remboursees()->count(),
+            'total'             => AvanceSalaire::count(),
+            'actives'           => AvanceSalaire::actives()->count(),
+            'remboursees'       => AvanceSalaire::remboursees()->count(),
             'montant_total_usd' => (float) AvanceSalaire::sum('montant_avance_usd'),
             'dette_totale_usd'  => (float) AvanceSalaire::actives()->sum('dette_restante_usd'),
         ];
 
-        // Dettes par utilisateur (via le service optimisé)
         $dettesParUser = collect($this->avanceService->getUsersData($users))
             ->keyBy('id')
             ->toArray();
@@ -73,34 +73,35 @@ class AvanceSalaireController extends Controller
     }
 
     // ============================================================
-    // CRÉATION
+    // CREATE — Formulaire de création
     // ============================================================
 
-    /**
-     * Formulaire de création d'une avance.
-     */
     public function create(): View
     {
-        $users     = User::orderBy('name')->get(['id', 'name', 'email']);
-        $mois      = MoisScolaire::orderBy('mois')->get();
+        // ✅ FIX : utilise le service qui filtre correctement les users avec salaire > 0
+        $users     = $this->avanceService->getUsersAvecSalaireFixe();
+        $usersData = $this->avanceService->getUsersData($users);
+
+        $mois       = MoisScolaire::orderBy('mois')->get();
         $tauxChange = $this->avanceService->getTauxChangeSafe();
-        $usersData  = $this->avanceService->getUsersData($users);
 
         return view('admin.avances.create', compact('users', 'mois', 'tauxChange', 'usersData'));
     }
 
-    /**
-     * Enregistre une nouvelle avance.
-     */
+    // ============================================================
+    // STORE — Enregistrer une nouvelle avance
+    // ============================================================
+
     public function store(Request $request): RedirectResponse
     {
         $data = $this->validateAvance($request);
 
-        $user          = User::findOrFail($data['user_id']);
-        $montantAvance = (int) round($data['montant_avance_usd']);
+        $user = User::findOrFail($data['user_id']);
+
+        // ✅ FIX PHP 8.5 : cast (float) avant round()
+        $montantAvance = (int) round((float) $data['montant_avance_usd']);
 
         try {
-            // Utilise la méthode centralisée du service (avec vérifications et transaction)
             $avance = $this->avanceService->creerAvance($user, [
                 'montant_avance_usd' => $montantAvance,
                 'mois_scolaire_id'   => $data['mois_scolaire_id'],
@@ -109,14 +110,13 @@ class AvanceSalaireController extends Controller
                 'commentaire'        => $data['commentaire'] ?? null,
             ]);
 
-            // Avertissement si l'avance dépasse le salaire mensuel
             $this->avertirDepassementSalaire($user, $montantAvance);
 
             Log::info('Avance créée manuellement (admin)', [
-                'avance_id'  => $avance->id,
-                'user_id'    => $user->id,
-                'montant'    => $montantAvance,
-                'admin_id'   => auth()->id(),
+                'avance_id' => $avance->id,
+                'user_id'   => $user->id,
+                'montant'   => $montantAvance,
+                'admin_id'  => auth()->id(),
             ]);
 
             return redirect()
@@ -124,13 +124,13 @@ class AvanceSalaireController extends Controller
                 ->with('success', "Avance de " . number_format($montantAvance, 0, ',', ' ') . " $ enregistrée avec succès pour {$user->name}.");
 
         } catch (\DomainException $e) {
-            // Erreur métier (limite dépassée)
             return back()->withInput()->with('error', $e->getMessage());
 
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             Log::error('Erreur création avance', [
                 'user_id' => $user->id,
                 'error'   => $e->getMessage(),
+                'trace'   => $e->getTraceAsString(),
             ]);
 
             return back()->withInput()
@@ -139,23 +139,26 @@ class AvanceSalaireController extends Controller
     }
 
     // ============================================================
-    // ÉDITION
+    // EDIT — Formulaire d'édition
     // ============================================================
 
-    /**
-     * Formulaire d'édition d'une avance.
-     */
     public function edit(AvanceSalaire $avance): View
     {
         $avance->load(['user', 'moisScolaire', 'remboursements']);
 
-        $users      = User::orderBy('name')->get(['id', 'name', 'email']);
+        // ✅ Charge les users avec salaire fixé
+        $users = $this->avanceService->getUsersAvecSalaireFixe();
+
+        // S'assurer que l'utilisateur actuel de l'avance est dans la liste
+        if ($avance->user && ! $users->contains('id', $avance->user_id)) {
+            $users->push($avance->user);
+        }
+
+        $usersData  = $this->avanceService->getUsersData($users);
         $mois       = MoisScolaire::orderBy('mois')->get();
         $tauxChange = $this->avanceService->getTauxChangeSafe();
-        $usersData  = $this->avanceService->getUsersData($users);
 
-        // Indique si l'avance peut être modifiée
-        $peutEtreModifiee = $avance->peutEtreModifiee();
+        $peutEtreModifiee   = $avance->peutEtreModifiee();
         $aDesRemboursements = $avance->remboursements()->exists();
 
         return view('admin.avances.edit', compact(
@@ -169,34 +172,32 @@ class AvanceSalaireController extends Controller
         ));
     }
 
-    /**
-     * Met à jour une avance existante.
-     */
+    // ============================================================
+    // UPDATE — Mettre à jour une avance
+    // ============================================================
+
     public function update(Request $request, AvanceSalaire $avance): RedirectResponse
     {
         $data = $this->validateAvance($request, true);
 
-        $user          = User::findOrFail($data['user_id']);
-        $nouveauMontant = (int) round($data['montant_avance_usd']);
-        $rembourse     = (int) $avance->montant_rembourse_usd;
+        $user = User::findOrFail($data['user_id']);
 
-        // ============================================================
-        // VÉRIFICATION : modification du montant interdite si remboursements
-        // ============================================================
+        // ✅ FIX PHP 8.5 : cast (float) avant round()
+        $nouveauMontant = (int) round((float) $data['montant_avance_usd']);
+        $rembourse      = (int) $avance->montant_rembourse_usd;
+
+        // Blocage si déjà remboursée et montant modifié
         if ($avance->remboursements()->exists() && $nouveauMontant !== (int) $avance->montant_avance_usd) {
             return back()
                 ->withInput()
                 ->with('error', 'Cette avance a déjà été partiellement remboursée. Vous ne pouvez pas modifier son montant.');
         }
 
-        // ============================================================
-        // VÉRIFICATION : limite d'emprunt si le montant augmente
-        // ============================================================
+        // Vérification limite si le montant augmente
         if ($nouveauMontant > (int) $avance->montant_avance_usd) {
-            // Calcul de la dette hors avance actuelle
-            $detteHorsAvance    = $this->avanceService->getDetteTotale($user) - (int) $avance->dette_restante_usd;
+            $detteHorsAvance     = $this->avanceService->getDetteTotale($user) - (int) $avance->dette_restante_usd;
             $nouvelleDetteTotale = $detteHorsAvance + max(0, $nouveauMontant - $rembourse);
-            $limite             = $this->avanceService->getLimiteEmprunt($user);
+            $limite              = $this->avanceService->getLimiteEmprunt($user);
 
             if ($nouvelleDetteTotale > $limite) {
                 return back()->withInput()->with('error', sprintf(
@@ -208,12 +209,11 @@ class AvanceSalaireController extends Controller
         }
 
         try {
-            DB::transaction(function () use ($avance, $data, $user, $nouveauMontant, $rembourse) {
+            DB::transaction(function () use ($avance, $data, $user, $nouveauMontant, $rembourse): void {
                 $taux = $this->avanceService->getTauxChangeSafe();
 
                 $detteRestante = max(0, $nouveauMontant - $rembourse);
 
-                // Auto-détermination du statut si la dette devient nulle
                 $statut = $data['statut'];
                 if ($detteRestante === 0 && $statut === AvanceSalaire::STATUT_EN_ATTENTE) {
                     $statut = AvanceSalaire::STATUT_REMBOURSEE;
@@ -232,18 +232,15 @@ class AvanceSalaireController extends Controller
                     'dette_restante_fc'  => (int) round($detteRestante * $taux),
                 ]);
 
-                // Invalider le cache de dette de l'utilisateur
                 $this->avanceService->invaliderCacheDette($user);
-
-                // Avertissement si dépassement
                 $this->avertirDepassementSalaire($user, $nouveauMontant);
             });
 
             Log::info('Avance mise à jour (admin)', [
-                'avance_id'          => $avance->id,
-                'user_id'            => $user->id,
-                'nouveau_montant'    => $nouveauMontant,
-                'admin_id'           => auth()->id(),
+                'avance_id'       => $avance->id,
+                'user_id'         => $user->id,
+                'nouveau_montant' => $nouveauMontant,
+                'admin_id'        => auth()->id(),
             ]);
 
             return redirect()
@@ -253,10 +250,11 @@ class AvanceSalaireController extends Controller
         } catch (\DomainException $e) {
             return back()->withInput()->with('error', $e->getMessage());
 
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             Log::error('Erreur mise à jour avance', [
                 'avance_id' => $avance->id,
                 'error'     => $e->getMessage(),
+                'trace'     => $e->getTraceAsString(),
             ]);
 
             return back()->withInput()
@@ -265,27 +263,25 @@ class AvanceSalaireController extends Controller
     }
 
     // ============================================================
-    // SUPPRESSION
+    // DESTROY — Supprimer une avance
     // ============================================================
 
-    /**
-     * Supprime une avance (bloqué si des remboursements existent).
-     */
     public function destroy(AvanceSalaire $avance): RedirectResponse
     {
-        // Protection : pas de suppression si remboursements
-        if (!$avance->peutEtreSupprimee()) {
-            return back()->with('error', 'Impossible de supprimer une avance qui a déjà été remboursée partiellement ou totalement. Vous pouvez l\'annuler à la place.');
+        if (! $avance->peutEtreSupprimee()) {
+            return back()->with(
+                'error',
+                "Impossible de supprimer une avance qui a déjà été remboursée partiellement ou totalement. Vous pouvez l'annuler à la place."
+            );
         }
 
         $userId = $avance->user_id;
 
         try {
-            DB::transaction(function () use ($avance) {
+            DB::transaction(function () use ($avance): void {
                 $avance->delete();
             });
 
-            // Invalider le cache de dette
             if ($userId) {
                 cache()->forget('dettes_actives_user_' . $userId);
             }
@@ -300,7 +296,7 @@ class AvanceSalaireController extends Controller
                 ->route('admin.avances.index')
                 ->with('success', "Avance #{$avance->id} supprimée avec succès.");
 
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             Log::error('Erreur suppression avance', [
                 'avance_id' => $avance->id,
                 'error'     => $e->getMessage(),
@@ -334,15 +330,15 @@ class AvanceSalaireController extends Controller
 
         return $request->validate($rules, [
             'user_id.required'            => 'Le bénéficiaire est obligatoire.',
-            'user_id.exists'              => 'L\'utilisateur sélectionné est invalide.',
+            'user_id.exists'              => "L'utilisateur sélectionné est invalide.",
             'mois_scolaire_id.required'   => 'Le mois scolaire est obligatoire.',
             'mois_scolaire_id.exists'     => 'Le mois scolaire sélectionné est invalide.',
-            'montant_avance_usd.required' => 'Le montant de l\'avance est obligatoire.',
+            'montant_avance_usd.required' => "Le montant de l'avance est obligatoire.",
             'montant_avance_usd.numeric'  => 'Le montant doit être un nombre valide.',
             'montant_avance_usd.min'      => 'Le montant doit être supérieur à 0.',
             'montant_avance_usd.max'      => 'Le montant ne peut pas dépasser 1 000 000 $.',
-            'date_avance.required'        => 'La date de l\'avance est obligatoire.',
-            'date_avance.date'            => 'La date de l\'avance doit être valide.',
+            'date_avance.required'        => "La date de l'avance est obligatoire.",
+            'date_avance.date'            => "La date de l'avance doit être valide.",
             'motif.max'                   => 'Le motif ne peut pas dépasser 255 caractères.',
             'commentaire.max'             => 'Le commentaire ne peut pas dépasser 1000 caractères.',
             'statut.required'             => 'Le statut est obligatoire.',
@@ -357,7 +353,7 @@ class AvanceSalaireController extends Controller
     {
         $salaireMensuel = $this->avanceService->getSalaireMensuelUsd($user);
 
-        if ($montantAvance > $salaireMensuel && $salaireMensuel > 0) {
+        if ($salaireMensuel > 0 && $montantAvance > $salaireMensuel) {
             session()->flash('warning', sprintf(
                 "L'avance de %s $ dépasse le salaire mensuel de %s (%d $). La dette sera reportée sur les mois suivants.",
                 number_format($montantAvance, 0, ',', ' '),
